@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security hole
+    url: https://github.com/NubzParmesan/mutual/security/advisories/new
+    about: Report it privately so it can be fixed before it's public

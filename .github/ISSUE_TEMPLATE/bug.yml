@@ -1,0 +1,60 @@
+name: Bug
+description: Something doesn't work right
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. If this is a security hole, please use **Report a vulnerability** on the Security tab instead so it isn't public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Pairing
+        - Streaming (picture or sound)
+        - Controlling the other PC
+        - Sending files
+        - SSH
+        - RimWorld split
+        - Connecting (Hamachi, network, rendezvous server)
+        - Installing or updating
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mutual version
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 10 22H2, Windows 11 24H2, ..."
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How the two PCs connect
+      options:
+        - Same network
+        - Hamachi
+        - Tailscale
+        - Rendezvous server
+        - Not sure
+  - type: textarea
+    id: log
+    attributes:
+      label: mutual.log
+      description: |
+        Tray icon > Open log folder, then paste the end of mutual.log here. It has your friend's name and file names in it, so cut anything you don't want public.
+      render: text

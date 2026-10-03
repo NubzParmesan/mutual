@@ -1,0 +1,15 @@
+name: Idea
+description: Something Mutual should do
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you want it to do
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you were trying to do when you wanted it. This helps more than the idea itself sometimes
