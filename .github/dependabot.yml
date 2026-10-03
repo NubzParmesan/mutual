@@ -1,0 +1,11 @@
+# opens a pull request when a package or action has an update, nothing changes until its merged
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

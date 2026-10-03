@@ -55,6 +55,17 @@ static class Takeover
         return problems.Count == 0 ? null : string.Join("; ", problems);
     }
 
+    // where a .lnk points, or null if it cant be read
+    public static string? ShortcutTarget(string path)
+    {
+        var shellType = Type.GetTypeFromProgID("WScript.Shell");
+        if (shellType == null) return null;
+        dynamic shell = Activator.CreateInstance(shellType)!;
+        try { return (string)shell.CreateShortcut(path).TargetPath; }
+        catch { return null; }
+        finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
+    }
+
     public static void MakeShortcut(string path, string target, string args)
     {
         var shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("no WScript.Shell");

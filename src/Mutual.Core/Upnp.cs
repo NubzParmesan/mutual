@@ -33,8 +33,9 @@ public static class Upnp
                 var resp = Encoding.ASCII.GetString(udp.Receive(ref from));
                 var loc = Regex.Match(resp, @"(?im)^location:\s*(\S+)").Groups[1].Value;
                 if (loc.Length == 0) continue;
-                // only the box that answered, plain http on the local network
-                if (!Uri.TryCreate(loc, UriKind.Absolute, out var u) || u.Scheme != "http" || !IPAddress.TryParse(u.Host, out var host) || !host.Equals(from!.Address)) continue;
+                // only your actual router (the default gateway) gets listened to, over plain http, at its own address
+                if (!Gateways().Contains(from!.Address)) continue;
+                if (!Uri.TryCreate(loc, UriKind.Absolute, out var u) || u.Scheme != "http" || !IPAddress.TryParse(u.Host, out var host) || !host.Equals(from.Address)) continue;
                 var g = ReadDescription(loc);
                 if (g != null) return g;
             }
@@ -43,6 +44,13 @@ public static class Upnp
         }
         return null;
     }
+
+    static HashSet<IPAddress> Gateways() =>
+        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+            .SelectMany(n => n.GetIPProperties().GatewayAddresses.Select(g => g.Address))
+            .Where(a => a.AddressFamily == AddressFamily.InterNetwork && !a.Equals(IPAddress.Any))
+            .ToHashSet();
 
     static Gateway? ReadDescription(string location)
     {

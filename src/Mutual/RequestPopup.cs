@@ -28,7 +28,7 @@ sealed class RequestPopup : Form
             RequestKind.Ssh => "wants to open SSH",
             RequestKind.Stream => "wants to stream to you" + (req.Detail != null ? " (" + req.Detail + ")" : ""),
             RequestKind.Play => "wants to play together",
-            RequestKind.File => "wants to send you a file" + (req.Detail != null ? ": " + req.Detail : ""),
+            RequestKind.File => "wants to send you a file" + (req.Detail != null ? ": " + req.Detail : "") + (Mutual.Core.FileTransfer.CanRun(req.Detail) ? "\r\nheads up, this kind of file can run code" : ""),
             _ => "wants to connect",
         };
         Controls.Add(new Label { Text = "Mutual", ForeColor = Theme.Accent, Font = new Font("Segoe UI Semibold", 10f), AutoSize = true, Location = new Point(14, 10) });
@@ -37,7 +37,8 @@ sealed class RequestPopup : Form
             Text = friend + " " + what + "\r\n" + DateTime.Now.ToString("h:mm tt"),
             ForeColor = Theme.Text, Font = Theme.Body, AutoSize = false, Size = new Size(330, 40), Location = new Point(14, 32),
         });
-        var yes = Theme.Button("Accept", (_, _) => { Close(); accept(); }, primary: true);
+        var shownAt = DateTime.UtcNow;
+        var yes = Theme.Button("Accept", (_, _) => { if ((DateTime.UtcNow - shownAt).TotalMilliseconds < 1000) return; Close(); accept(); }, primary: true);
         yes.SetBounds(186, 74, 80, 28);
         var no = Theme.Button("Ignore", (_, _) => Close());
         no.SetBounds(272, 74, 76, 28);

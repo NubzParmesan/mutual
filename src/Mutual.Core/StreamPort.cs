@@ -22,22 +22,26 @@ public static class StreamPort
             ? new[] { new Rule(RequestsName, "TCP", ports.Ping), new Rule(StreamLinkName, "TCP", ports.Stream), new Rule(StreamVideoName, "UDP", ports.Stream) }
             : new[] { new Rule(RequestsName, "TCP", ports.Ping) };
 
+    // a rule counts only if its there and points at this exe (moving mutual means the old rule lets nothing in)
     public static List<Rule> Missing(Pairing p) =>
-        IsLoopback(p.PeerAddress) ? new List<Rule>() : Needed(p.Role, p.MyPorts).Where(r => !Exists(r.Name)).ToList();
+        IsLoopback(p.PeerAddress) ? new List<Rule>() : Needed(p.Role, p.MyPorts).Where(r => !Exists(r.Name, Environment.ProcessPath)).ToList();
 
     static bool IsLoopback(string a) => a.StartsWith("127.") || a == "::1" || a.Equals("localhost", StringComparison.OrdinalIgnoreCase);
 
-    static bool Exists(string name)
+    static bool Exists(string name, string? program)
     {
         try
         {
             // netsh works without admin, Get-NetFirewallRule js returns nothing
-            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "netsh.exe"), $"advfirewall firewall show rule name=\"{name}\"")
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "netsh.exe"), $"advfirewall firewall show rule name=\"{name}\" verbose")
             { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
             using var p = Process.Start(psi)!;
             var output = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
-            return p.ExitCode == 0 && output.Contains(name);
+            if (p.ExitCode != 0 || !output.Contains(name)) return false;
+            if (program == null) return true;
+            var line = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("Program:", StringComparison.OrdinalIgnoreCase));
+            return line != null && string.Equals(line["Program:".Length..].Trim(), program, StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
     }

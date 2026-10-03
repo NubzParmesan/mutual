@@ -17,6 +17,7 @@ public enum Msg : byte
     CursorShape = 8,   // host -> viewer: shape(4) hotX(2) hotY(2) png
     UdpSetup = 9,   // host -> viewer: 32 byte key for the udp lane
     Clipboard = 12,   // either way: utf8 text, only if that side turned clipboard sharing on
+    Control = 13,     // host -> viewer: 1 byte, 1 = you can use the mouse and keyboard, 0 = watch only
     Heartbeat = 11,   // host -> viewer: nothing, every 2 s so the tcp link doesnt look dead while video is on udp
     Audio = 10,   // host -> viewer: seq(4) + opus, when udp isnt up
 }

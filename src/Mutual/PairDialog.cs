@@ -14,6 +14,7 @@ sealed class PairDialog : Form
     readonly ComboBox address = new() { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDown };
     readonly Label info = new() { Dock = DockStyle.Top, Height = 44, ForeColor = Theme.Dim, Font = Theme.Small };
     readonly Button save;
+    readonly CheckBox compared = new() { Text = "we read the safety code to each other out loud and it matches", Dock = DockStyle.Top, Height = 30, Enabled = false };
     readonly X509Certificate2 identity;
     readonly string folder;
     Pairing.Offer? offer;
@@ -26,7 +27,7 @@ sealed class PairDialog : Form
         Text = "Pair with a friend";
         Icon = Program.AppIcon;
         BackColor = Theme.Back; ForeColor = Theme.Text; Font = Theme.Body;
-        ClientSize = new Size(500, 470);
+        ClientSize = new Size(500, 500);
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
         foreach (var t in new TextBoxBase[] { mine, theirs, name }) { t.BackColor = Theme.Panel; t.ForeColor = Theme.Text; t.BorderStyle = BorderStyle.FixedSingle; }
@@ -37,6 +38,8 @@ sealed class PairDialog : Form
         var copy = Theme.Button("Copy my code", (_, _) => { Clipboard.SetText(mine.Text); info.Text = "Copied. Send it to your friend, then paste theirs below."; });
         copy.Dock = DockStyle.Top; copy.Height = 30;
         theirs.TextChanged += (_, _) => ReadTheirs();
+        // a code pasted from a fake account looks the same as a real one, only comparing the safety code catches it
+        compared.CheckedChanged += (_, _) => save.Enabled = offer != null && compared.Checked;
         save = Theme.Button("Pair", (_, _) => Save(), primary: true);
         save.Enabled = false;
         var cancel = Theme.Button("Cancel", (_, _) => Close());
@@ -46,6 +49,7 @@ sealed class PairDialog : Form
 
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16, 12, 16, 0) };
         // docked top down so it goes in backwards
+        body.Controls.Add(compared);
         body.Controls.Add(info);
         body.Controls.Add(address);
         body.Controls.Add(Caption("Their address (a Hamachi or Tailscale one if you both have it)"));
@@ -65,7 +69,7 @@ sealed class PairDialog : Form
 
     void ReadTheirs()
     {
-        offer = null; save.Enabled = false;
+        offer = null; save.Enabled = false; compared.Checked = false; compared.Enabled = false;
         if (string.IsNullOrWhiteSpace(theirs.Text)) return;
         try
         {
@@ -77,7 +81,7 @@ sealed class PairDialog : Form
             address.Text = Pairing.PickAddress(offer.Addresses);
             info.Text = "Safety code: " + Pairing.SafetyCodeFor(identity.RawData, offer.Cert) + "\r\nYour friend should see the same one. If not, don't pair.";
             info.ForeColor = Theme.Accent;
-            save.Enabled = true;
+            compared.Enabled = true;
         }
         catch (Exception e) { info.Text = e.Message; info.ForeColor = Theme.Bad; }
     }

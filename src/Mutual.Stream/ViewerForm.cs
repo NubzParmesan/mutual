@@ -51,7 +51,7 @@ public sealed class ViewerForm : Form, IMessageFilter
         {
             int f = rx.FramesDecoded;
             var info = rx.Info;
-            stats.Text = info == null ? "waiting for picture..." : $"{info.Width}x{info.Height}  {f - lastFrames} fps  decode {rx.DecodeMs:F1} ms  {rx.Transport}" + (rx.Transport == "udp" ? $" {rx.RttMs:F0} ms rtt  loss {rx.LastLoss:P1}" : "") + $"  {info.Encoder}" + (rx.Sound == null ? "" : rx.Sound.Muted ? "  sound muted (click)" : "  sound on (click to mute)");
+            stats.Text = info == null ? "waiting for picture..." : $"{info.Width}x{info.Height}  {f - lastFrames} fps  decode {rx.DecodeMs:F1} ms  {rx.Transport}" + (rx.Transport == "udp" ? $" {rx.RttMs:F0} ms rtt  loss {rx.LastLoss:P1}" : "") + $"  {info.Encoder}" + (rx.Sound == null ? "" : rx.Sound.Muted ? "  sound muted (click)" : "  sound on (click to mute)") + (rx.CanControl ? "  you have control" : "  watch only");
             lastFrames = f;
         };
         statsTimer.Start();
