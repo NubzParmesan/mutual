@@ -54,7 +54,7 @@ public sealed class StreamReceiver : IDisposable
     public void SendClipboard(string text) { if (running) try { wire.Send(Msg.Clipboard, System.Text.Encoding.UTF8.GetBytes(text)); } catch { } }
     // x, y (0..65535 across the stream), visible, shape id
     public event Action<ushort, ushort, bool, int>? CursorMoved;
-    // shape id, hotspot x, hotspot y, png
+    // shape id, hotspot x, hotspot y, raw pixels (see CursorPixels)
     public event Action<int, int, int, byte[]>? CursorShape;
     public int FramesDecoded { get; private set; }
     public double DecodeMs { get; private set; }
@@ -134,7 +134,7 @@ public sealed class StreamReceiver : IDisposable
                         catch (Exception) { udp = null; }   // stays on tcp
                         break;
                     case Msg.Cursor: { var c = Wire.ReadCursor(p); Safe(() => CursorMoved?.Invoke(c.x, c.y, c.visible, c.shape)); break; }
-                    case Msg.CursorShape: { var c = Wire.ReadCursorShape(p); Safe(() => CursorShape?.Invoke(c.shape, c.hotX, c.hotY, c.png)); break; }
+                    case Msg.CursorShape: { var c = Wire.ReadCursorShape(p); Safe(() => CursorShape?.Invoke(c.shape, c.hotX, c.hotY, c.pixels)); break; }
                     case Msg.Bye: EndedByHost = true; running = false; why = "they stopped sharing"; break;
                 }
             }

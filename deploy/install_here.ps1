@@ -2,7 +2,7 @@
 # offers on its own when you run it, this js skips the question
 $ErrorActionPreference = 'Stop'
 $src = (Resolve-Path (Join-Path $PSScriptRoot '..\publish\Mutual.exe')).Path
-$p = Start-Process $src -ArgumentList "--install-copy `"$src`"" -Verb RunAs -Wait -PassThru
+$p = Start-Process $src -ArgumentList "--install-copy" -Verb RunAs -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw 'install failed' }
 $exe = Join-Path $env:ProgramFiles 'Mutual\Mutual.exe'
 Start-Process $exe

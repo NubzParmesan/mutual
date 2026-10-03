@@ -30,7 +30,7 @@ public sealed class HostCursor
                 {
                     shape = shapeIds.Count + 1;
                     shapeIds[ci.cursor] = shape;
-                    wire.SendCursorShape(shape, s.Value.hotX, s.Value.hotY, s.Value.png);
+                    wire.SendCursorShape(shape, s.Value.hotX, s.Value.hotY, s.Value.pixels);
                 }
             }
             lastShapeId = shape;
@@ -45,7 +45,7 @@ public sealed class HostCursor
 
     // draws the pointer on black and on white and compares them to get its real transparency
     // also handles old style pointers like the text beam that invert whats under them
-    static (int hotX, int hotY, byte[] png)? Render(nint cursor)
+    static (int hotX, int hotY, byte[] pixels)? Render(nint cursor)
     {
         if (!GetIconInfo(cursor, out var ii)) return null;
         try
@@ -78,9 +78,7 @@ public sealed class HostCursor
                     outBmp.SetPixel(x, y, Color.FromArgb(a, un(b.R), un(b.G), un(b.B)));
                 }
             OutlineInverted(outBmp, onBlack, onWhite);
-            using var ms = new MemoryStream();
-            outBmp.Save(ms, ImageFormat.Png);
-            return (ii.hotX, ii.hotY, ms.ToArray());
+            return (ii.hotX, ii.hotY, CursorPixels.Pack(outBmp));
         }
         finally
         {

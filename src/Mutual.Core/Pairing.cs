@@ -135,8 +135,17 @@ public sealed class Pairing
         if (!code.StartsWith(CodePrefix)) throw new FormatException("That isn't a Mutual pairing code (they start with " + CodePrefix + ").");
         var b64 = code[CodePrefix.Length..].Replace('-', '+').Replace('_', '/');
         b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
-        using var z = new DeflateStream(new MemoryStream(Convert.FromBase64String(b64)), CompressionMode.Decompress);
-        var offer = JsonSerializer.Deserialize<Offer>(z) ?? throw new FormatException("The pairing code is empty.");
+        if (b64.Length > 16_000) throw new FormatException("That pairing code is way too long.");
+        byte[] packed;
+        try { packed = Convert.FromBase64String(b64); } catch (FormatException) { throw new FormatException("That pairing code is damaged."); }
+        // a tiny code can be built to unpack into gigabytes, so stop reading at 64 kb
+        using var z = new DeflateStream(new MemoryStream(packed), CompressionMode.Decompress);
+        var json = new byte[64 * 1024];
+        int got = 0, n;
+        try { while (got < json.Length && (n = z.Read(json, got, json.Length - got)) > 0) got += n; }
+        catch (InvalidDataException) { throw new FormatException("That pairing code is damaged."); }
+        if (got == json.Length) throw new FormatException("That pairing code unpacks to something way too big.");
+        var offer = JsonSerializer.Deserialize<Offer>(json.AsSpan(0, got)) ?? throw new FormatException("The pairing code is empty.");
         using (var check = new X509Certificate2(offer.Cert)) { }
         // everything in a code comes from the other person so only plain addresses, a short name and real ports get thru
         var name = new string((offer.Name ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();

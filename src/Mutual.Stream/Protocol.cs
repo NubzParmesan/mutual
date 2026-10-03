@@ -14,7 +14,7 @@ public enum Msg : byte
     KeyFrame = 5,   // viewer -> host: send a keyframe (joined late or lost something)
     Bye = 6,
     Stats = 7,   // viewer -> host: json ViewerStats
-    CursorShape = 8,   // host -> viewer: shape(4) hotX(2) hotY(2) png
+    CursorShape = 8,   // host -> viewer: shape(4) hotX(2) hotY(2) w(2) h(2) bgra pixels
     UdpSetup = 9,   // host -> viewer: 32 byte key for the udp lane
     Clipboard = 12,   // either way: utf8 text, only if that side turned clipboard sharing on
     Control = 13,     // host -> viewer: 1 byte, 1 = you can use the mouse and keyboard, 0 = watch only
@@ -88,17 +88,17 @@ public sealed class Wire
     public static (ushort x, ushort y, bool visible, int shape) ReadCursor(byte[] p) =>
         (BinaryPrimitives.ReadUInt16LittleEndian(p), BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(2)), p[4] != 0, BinaryPrimitives.ReadInt32LittleEndian(p.AsSpan(5)));
 
-    public void SendCursorShape(int shape, int hotX, int hotY, byte[] png)
+    public void SendCursorShape(int shape, int hotX, int hotY, byte[] pixels)
     {
-        var b = new byte[8 + png.Length];
+        var b = new byte[8 + pixels.Length];
         BinaryPrimitives.WriteInt32LittleEndian(b, shape);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4), (ushort)hotX);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(6), (ushort)hotY);
-        png.CopyTo(b, 8);
+        pixels.CopyTo(b, 8);
         Send(Msg.CursorShape, b);
     }
 
-    public static (int shape, int hotX, int hotY, byte[] png) ReadCursorShape(byte[] p) =>
+    public static (int shape, int hotX, int hotY, byte[] pixels) ReadCursorShape(byte[] p) =>
         (BinaryPrimitives.ReadInt32LittleEndian(p), BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(4)), BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(6)), p.AsSpan(8).ToArray());
 
     public static InputEvent ReadInput(byte[] p) => new((InputKind)p[0], BinaryPrimitives.ReadUInt16LittleEndian(p.AsSpan(1)),

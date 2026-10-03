@@ -267,6 +267,8 @@ public sealed class StreamHost : IDisposable
         int x = r.X + (int)(e.X / 65535.0 * Math.Max(1, r.Width - 1));
         int y = r.Y + (int)(e.Y / 65535.0 * Math.Max(1, r.Height - 1));
         if (source is IInputSink sink) { sink.Handle(e, x, y); return; }
+        // never let their clicks land on mutual itself (send file, settings, accepting their own invites)
+        if (e.Kind is InputKind.Down or InputKind.Wheel or InputKind.HWheel && OwnWindowAt(x, y)) return;
         switch (e.Kind)
         {
             case InputKind.Move: Mouse(x, y, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, 0); break;
@@ -284,6 +286,7 @@ public sealed class StreamHost : IDisposable
     bool KeyAllowed(int code)
     {
         int vk = code & 0xFFFF;
+        if (IsOwn(GetForegroundWindow())) return false;   // no typing into mutual itself
         if (source is ScreenSource) return true;
         if (vk is 0x5B or 0x5C) return false;
         var fg = GetAncestor(GetForegroundWindow(), 2);   // GA_ROOT
@@ -296,6 +299,14 @@ public sealed class StreamHost : IDisposable
                 return under != 0 && under == fg;
         }
     }
+    static bool OwnWindowAt(int x, int y) => IsOwn(WindowFromPoint(new POINTSTRUCT { x = x, y = y }));
+    static bool IsOwn(nint h)
+    {
+        if (h == 0) return false;
+        GetWindowThreadProcessId(h, out uint pid);
+        return pid == (uint)Environment.ProcessId;
+    }
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint h, out uint pid);
     [StructLayout(LayoutKind.Sequential)] struct POINTSTRUCT { public int x, y; }
     [DllImport("user32.dll")] static extern nint WindowFromPoint(POINTSTRUCT p);
     [DllImport("user32.dll")] static extern nint GetAncestor(nint h, uint flags);
