@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- exact package versions get written to packages.lock.json and checked on every build -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(TargetFramework.Contains('windows'))">
+    <!-- the release is win-x64, so every build resolves packages the same way the release does -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+</Project>

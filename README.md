@@ -31,7 +31,7 @@ Mutual is all of that in one app. The one rule it's built around is that **nothi
 ## WHAT IT DOES
 
 - **Stream** a whole screen, one window (even with other windows on top of it), or a box you drag and resize while it's live
-- **Let your friend play.** Their mouse and keyboard work on whatever you're sharing, and only on that. Your cursor shows up on their side too
+- **Let your friend play.** Every stream starts watch only. Click **Let them control** on the bar at the top of your screen and their mouse and keyboard work on whatever you're sharing, and only on that. **Ctrl+Alt+End** takes it back from anywhere. Your cursor shows up on their side too
 - **Sound** comes through with the picture, compressed with Opus
 - **Send files** straight to their Downloads, checked on arrival so a damaged file never shows up
 - **SSH** that only turns on while you're both connected and turns itself back off after
@@ -41,20 +41,32 @@ Mutual is all of that in one app. The one rule it's built around is that **nothi
 
 ## HOW PRIVATE IS IT
 
-- You pair once by swapping codes. A code only holds a public key and some addresses, so it's safe to paste in Discord. Afterwards you both see the same safety code, and if it matches nobody got in the middle
+- You pair once by swapping codes. A code only holds a public key and some addresses, so it's safe to paste in Discord. Afterwards you both read the same safety code out loud, and Mutual won't pair until you say it matched. If the key ever changes without you pairing again, Mutual warns you
 - Every connection between the two PCs is encrypted, and each side only accepts the one key it paired with
 - There's no account and no cloud. The optional rendezvous server (for when you're not on the same VPN) only ever sees an id and encrypted bytes. It can't read anything, and requests going through it are signed so it can't fake one either
-- The activity list shows what happened on your own PC. Never command history, file contents or what was on screen
+- Invites that keep getting ignored stop popping up for a while, and the Accept button ignores clicks for the first second so a mid game click can't hit it
+- Received files are marked the same way browser downloads are, so Windows asks before running one, and files that can run code get a warning before you accept
+- The activity list shows what happened on your own PC. Never command history, file contents or what was on screen. You can clear it from the tray menu
 
 ## GETTING STARTED
 
-1. Download `Mutual.exe` from [Releases](https://github.com/NubzParmesan/mutual/releases) and run it. It offers to install itself into your own programs folder (no admin) with Start menu and desktop shortcuts
+1. Download `Mutual.exe` from [Releases](https://github.com/NubzParmesan/mutual/releases) and run it. It checks itself against the checksum on the release, then installs into Program Files with Start menu and desktop shortcuts (one admin prompt). Program Files is on purpose: nothing else on your PC can swap it out there
 2. Click **Pair with a friend**, copy your code and send it to them, then paste theirs
 3. Read the safety code to each other
 4. Click **Set up** once so Windows lets your friend reach Mutual (one admin prompt, and the firewall rules only allow your friend's address)
 5. Hit **Stream** and pick what to share
 
 It works best when you're both on the same VPN (Hamachi, Tailscale, whatever) or the same network. If you're not, put a rendezvous server in Settings. Mutual tries to open its port on your router, and if that doesn't work it relays through the server.
+
+## CHECKING A DOWNLOAD
+
+Every release is built by GitHub Actions straight from this repo, with a `Mutual.exe.sha256` next to the exe and a signed record of which commit and workflow built it. To check a copy yourself:
+
+```
+gh attestation verify Mutual.exe --repo NubzParmesan/mutual
+```
+
+The build pins every action to an exact commit and every package to an exact version, so a change upstream can't sneak into a release.
 
 ## HOW IT WORKS
 

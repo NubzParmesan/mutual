@@ -20,7 +20,38 @@ public sealed class StreamHost : IDisposable
     readonly Thread captureThread, inputThread;
     volatile bool running = true;
     volatile bool keyframeWanted = true;
-    public bool AllowInput { get; set; }
+    public bool AllowInput { get; private set; }
+
+    // hands control over or takes it back, and tells the viewer. taking it back lets go of
+    // anything they were holding down so nothing stays pressed
+    public void SetControl(bool on)
+    {
+        AllowInput = on;
+        if (!on) ReleaseHeld();
+        try { wire.Send(Msg.Control, new[] { (byte)(on ? 1 : 0) }); } catch { }
+    }
+
+    readonly HashSet<int> heldKeys = new(), heldButtons = new();
+    void ReleaseHeld()
+    {
+        lock (heldKeys)
+        {
+            var r = source.Current();
+            int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
+            // a source that takes input itself (rimworld split) gets the releases too, not the real keyboard
+            if (source is IInputSink sink)
+            {
+                foreach (var k in heldKeys) sink.Handle(new InputEvent(InputKind.KeyUp, 0, 0, k), cx, cy);
+                foreach (var btn in heldButtons) sink.Handle(new InputEvent(InputKind.Up, 0, 0, btn), cx, cy);
+            }
+            else
+            {
+                foreach (var k in heldKeys) Key(k, true);
+                foreach (var btn in heldButtons) Mouse(cx, cy, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | ButtonFlag(btn, false), 0);
+            }
+            heldKeys.Clear(); heldButtons.Clear();
+        }
+    }
     // they closed it on purpose (not the link breaking)
     public bool EndedByViewer { get; private set; }
     public event Action<string>? ClipboardReceived;
@@ -39,7 +70,8 @@ public sealed class StreamHost : IDisposable
     // openUdp makes the udp lane with the key this host just made. null keeps video on tcp
     public StreamHost(Wire wire, StreamSource source, int fps = 60, int bitrate = 12_000_000, bool allowInput = true, Func<byte[], UdpVideo>? openUdp = null, bool shareSound = true)
     {
-        this.wire = wire; this.source = source; this.fps = fps; this.bitrate = this.maxBitrate = bitrate; AllowInput = allowInput;
+        this.wire = wire; this.source = source; this.fps = fps; this.bitrate = this.maxBitrate = bitrate;
+        SetControl(allowInput);   // the viewer only sends input once its told it can
         if (openUdp != null)
         {
             try
@@ -224,6 +256,11 @@ public sealed class StreamHost : IDisposable
 
     void Inject(InputEvent e)
     {
+        lock (heldKeys)
+        {
+            if (e.Kind == InputKind.KeyDown) heldKeys.Add(e.Value); else if (e.Kind == InputKind.KeyUp) heldKeys.Remove(e.Value);
+            if (e.Kind == InputKind.Down) heldButtons.Add(e.Value); else if (e.Kind == InputKind.Up) heldButtons.Remove(e.Value);
+        }
         var r = source.Current();
         // a covered window still streams but clicks land on whatevers on top, so bring it forward first
         if (e.Kind == InputKind.Down && source is WindowSource win) BringForward(win.Handle);

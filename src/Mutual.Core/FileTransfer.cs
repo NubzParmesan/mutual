@@ -25,6 +25,24 @@ public static class FileTransfer
     }
 
     // just a file name, no folders or device names or anything that gets out of downloads
+    static readonly string[] Runnable = { ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi", ".msp", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".jar", ".reg", ".dll", ".appref-ms", ".application", ".msix", ".appx" };
+
+    // true if the offered name (or "name (size)") looks like something windows would run
+    public static bool CanRun(string? nameOrDetail)
+    {
+        if (string.IsNullOrEmpty(nameOrDetail)) return false;
+        var n = nameOrDetail.Split('|')[0];
+        int paren = n.LastIndexOf(" (");
+        if (paren > 0 && n.EndsWith(")")) n = n[..paren];
+        return Runnable.Contains(Path.GetExtension(n).ToLowerInvariant());
+    }
+
+    // same mark a browser puts on downloads, so windows warns before running it
+    static void MarkFromElsewhere(string path)
+    {
+        try { File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=mutual:friend\r\n"); } catch { }
+    }
+
     public static string SafeName(string name)
     {
         name = name.Replace('\\', '/').Split('/').Last();
@@ -98,6 +116,7 @@ public static class FileTransfer
             await link.ReadExactlyAsync(theirs, ct);
             if (!sha.GetHashAndReset().AsSpan().SequenceEqual(theirs)) throw new InvalidDataException("The file arrived damaged (checksum mismatch); it was thrown away.");
             File.Move(part, final);
+            MarkFromElsewhere(final);
             await link.WriteAsync(new byte[] { 1 }, ct);
             await link.FlushAsync(ct);
             return final;

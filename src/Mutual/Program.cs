@@ -39,6 +39,7 @@ static class Program
 
         // the admin helpers, no tray and no single instance check
         if (args.Contains("--ssh-watchdog")) return SshSession.Watchdog(Arg("--ssh-watchdog")!);
+        if (args.Contains("--install-copy")) return SelfInstall.CopyElevated(Arg("--install-copy")!);
         ApplicationConfiguration.Initialize();
         Diag.HookCrashes();
         ActivityLog.Mirror = Diag.Write;

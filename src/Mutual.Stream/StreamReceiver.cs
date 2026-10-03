@@ -48,6 +48,9 @@ public sealed class StreamReceiver : IDisposable
     // the host stopped on purpose (not the link breaking)
     public bool EndedByHost { get; private set; }
     public event Action<string>? ClipboardReceived;
+    // whether the host lets this side use their mouse and keyboard rn
+    public bool CanControl { get; private set; }
+    public event Action<bool>? ControlChanged;
     public void SendClipboard(string text) { if (running) try { wire.Send(Msg.Clipboard, System.Text.Encoding.UTF8.GetBytes(text)); } catch { } }
     // x, y (0..65535 across the stream), visible, shape id
     public event Action<ushort, ushort, bool, int>? CursorMoved;
@@ -114,6 +117,7 @@ public sealed class StreamReceiver : IDisposable
                     case Msg.Video:
                         Decode(BitConverter.ToInt64(p, 0), p[8] != 0, p.AsSpan(9).ToArray());
                         break;
+                    case Msg.Control: CanControl = p.Length > 0 && p[0] == 1; Safe(() => ControlChanged?.Invoke(CanControl)); break;
                     case Msg.Clipboard: { var t = System.Text.Encoding.UTF8.GetString(p); Safe(() => ClipboardReceived?.Invoke(t)); break; }
                     case Msg.Audio:
                         PlaySound(p);
@@ -175,7 +179,7 @@ public sealed class StreamReceiver : IDisposable
     // testing, cut the link without saying bye
     public void Sever() => wire.Sever();
 
-    public void Send(InputEvent e) { if (running) try { wire.SendInput(e); } catch { } }
+    public void Send(InputEvent e) { if (running && CanControl) try { wire.SendInput(e); } catch { } }
 
     public void Dispose()
     {

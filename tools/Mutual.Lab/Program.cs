@@ -633,6 +633,42 @@ static class Lab
                     Console.WriteLine(ok ? "PASSED" : "FAILED (wanted " + string.Join(" | ", want) + ")");
                     return ok ? 0 : 1;
                 }
+                case "controlcheck":
+                {
+                    // controlcheck: control starts off (nothing gets thru), handing it over lets input thru,
+                    // taking it back releases what was held. uses a fake splitcolony mod so the real mouse never moves
+                    using var fakeMod = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 28794));
+                    var lines = new System.Collections.Concurrent.ConcurrentQueue<string>(); var stopFake = false;
+                    new Thread(() => { var from = new System.Net.IPEndPoint(0, 0); while (!stopFake) try { lines.Enqueue(System.Text.Encoding.ASCII.GetString(fakeMod.Receive(ref from))); } catch { } }) { IsBackground = true }.Start();
+                    new Thread(() => { while (!stopFake) { var b = System.Text.Encoding.ASCII.GetBytes("SPLIT 1000 100 800 600"); fakeMod.Send(b, b.Length, new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 28795)); Thread.Sleep(250); } }) { IsBackground = true }.Start();
+                    var src = new SplitColonySource(); Thread.Sleep(500);
+                    using var hostId = Mutual.Core.Pairing.CreateIdentity("h"); using var viewId = Mutual.Core.Pairing.CreateIdentity("v");
+                    var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); l.Start(); int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port; l.Stop();
+                    var hs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Server, System.Net.IPAddress.Loopback, "", port, hostId, viewId.RawData, TimeSpan.FromSeconds(10));
+                    var vs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Client, System.Net.IPAddress.Loopback, "127.0.0.1", port, viewId, hostId.RawData, TimeSpan.FromSeconds(10));
+                    using var hostLink = hs.GetAwaiter().GetResult(); using var viewLink = vs.GetAwaiter().GetResult();
+                    hostLink.ReadTimeout = viewLink.ReadTimeout = System.Threading.Timeout.Infinite;
+                    var host = new StreamHost(new Wire(hostLink), src, allowInput: false, shareSound: false);
+                    using var rx = new StreamReceiver(new Wire(viewLink));
+                    Thread.Sleep(500);
+                    string[] Take() { var r = new List<string>(); while (lines.TryDequeue(out var x)) if (!x.StartsWith("R")) r.Add(x); return r.ToArray(); }
+                    Take();
+                    rx.Send(new InputEvent(InputKind.KeyDown, 0, 0, 0x41)); Thread.Sleep(300);
+                    var off = Take();
+                    Console.WriteLine($"control off: viewer can control {rx.CanControl}, mod got [{string.Join(" | ", off)}]");
+                    host.SetControl(true); Thread.Sleep(300);
+                    rx.Send(new InputEvent(InputKind.KeyDown, 0, 0, 0x41)); Thread.Sleep(300);
+                    var on = Take();
+                    Console.WriteLine($"control on: viewer can control {rx.CanControl}, mod got [{string.Join(" | ", on)}]");
+                    host.SetControl(false); Thread.Sleep(300);
+                    var back = Take();
+                    Console.WriteLine($"taken back: viewer can control {rx.CanControl}");
+                    host.Dispose(); stopFake = true;
+                    Console.WriteLine($"released on take back: [{string.Join(" | ", back)}]");
+                    bool ok = off.Length == 0 && on.Contains("K 65 1") && !rx.CanControl && back.Contains("K 65 0");
+                    Console.WriteLine(ok ? "PASSED" : "FAILED");
+                    return ok ? 0 : 1;
+                }
                 case "encbench":
                 {
                     // encbench w h seconds: the encoder alone, same frame over and over

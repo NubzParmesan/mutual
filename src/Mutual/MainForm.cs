@@ -55,6 +55,7 @@ sealed class MainForm : Form
         menu.Items.Add(trayLogin);
         menu.Items.Add("Pair with someone new…", null, (_, _) => { ShowMe(); Pair(); });
         menu.Items.Add("Settings…", null, (_, _) => { ShowMe(); OpenSettings(); });
+        menu.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
         menu.Items.Add("Open log folder", null, (_, _) => Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppSettings.Dir + "\"") { UseShellExecute = true }));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit", null, (_, _) => { quitting = true; Close(); });
@@ -152,6 +153,7 @@ sealed class MainForm : Form
         else
         {
             log = new ActivityLog(Path.Combine(pairing.Folder, "activity.jsonl"));
+            CheckPairingUnchanged(pairing);
             friendName.Text = pairing.PeerName;
             pairInfo.Text = pairing.PeerAddress + "  ·  " + (pairing.IsLegacy ? "paired through Mutual SSH" : "safety code " + pairing.SafetyCode);
             friendStatus.Text = "checking…";
@@ -162,11 +164,28 @@ sealed class MainForm : Form
         RefreshSetup();
     }
 
+    // remembers the friends key. if its different next time and you didnt re-pair, say so loudly
+    void CheckPairingUnchanged(Pairing p)
+    {
+        var fp = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(p.PeerCertRaw));
+        if (settings.PeerFingerprint != null && settings.PeerFingerprint != fp && !justPaired)
+        {
+            log?.Write(ActivityResult.FAILED, "Mutual: the pairing with " + p.PeerName + " changed without re-pairing (new safety code " + p.SafetyCode + ")");
+            if (!offline) MessageBox.Show(this, "The key Mutual trusts for " + p.PeerName + " changed, but you didn't pair again.\n\nNew safety code: " + p.SafetyCode + "\n\nIf neither of you re-paired, something on this PC changed it. Pair again and compare the safety code out loud.",
+                "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        settings.PeerFingerprint = fp;
+        justPaired = false;
+        if (!offline) settings.Save();
+    }
+    bool justPaired;
+
     void Pair()
     {
         using var d = new PairDialog(settings, AppSettings.Dir);
         if (d.ShowDialog(this) != DialogResult.OK || d.Result == null) return;
         StopServices();
+        justPaired = true;
         LoadPairing();
         log?.Write(ActivityResult.OK, "Mutual: paired with " + d.Result.PeerName + " (safety code " + d.Result.SafetyCode + ")");
         if (!offline) StartServices();
@@ -302,13 +321,32 @@ sealed class MainForm : Form
 
     // requests from them
 
+    readonly List<DateTime> unanswered = new();
+    DateTime mutedUntil;
+
     void OnRequest(Request req)
     {
         if (pairing == null) return;
+        // 3 ignored invites in 10 min and the popups go quiet for 10 min, so nobody can spam you into a misclick
+        var now = DateTime.UtcNow;
+        unanswered.RemoveAll(t => now - t > TimeSpan.FromMinutes(10));
+        if (now < mutedUntil)
+        {
+            log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {req.Kind} again (popups paused for a bit)");
+            return;
+        }
+        if (unanswered.Count >= 3)
+        {
+            mutedUntil = now.AddMinutes(10);
+            log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} keeps asking, pausing their popups for 10 minutes");
+            return;
+        }
         string detail = req.Kind == RequestKind.File && FileTransfer.TryParse(req.Detail, out var fn, out var fs) ? fn + " (" + TransferWindow.Size(fs) + ")" : req.Detail ?? "";
         log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {req.Kind}" + (detail.Length > 0 ? ": " + detail : ""));
         if (settings.AutoAccept) { Accept(req); return; }
-        new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => Accept(req)).Show();
+        unanswered.Add(now);
+        var popup = new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); });
+        popup.Show();
     }
 
     void Accept(Request req)
@@ -326,6 +364,7 @@ sealed class MainForm : Form
 
     StreamHost? sharing;
     BoxOverlay? boxFrame;
+    ControlBar? controlBar;
     CancellationTokenSource? waitingForViewer;
     public ViewerForm? Watching { get; private set; }
     public StreamReceiver? WatchingReceiver { get; private set; }
@@ -380,6 +419,11 @@ sealed class MainForm : Form
         var wait = TimeSpan.FromMinutes(10);
         bool first = true;
         var tally = new SessionTally();
+        // rimworld split sends their input to the mod, not your mouse, and you clicked play for exactly that, so its on from the start
+        bool controlFromStart = source is SplitColonySource;
+        controlBar = new ControlBar(p.PeerName, source is ScreenSource);
+        controlBar.StopClicked += () => StopSharing();
+        controlBar.Show();
         while (!stopRequested)
         {
             waitingForViewer = new CancellationTokenSource();
@@ -388,7 +432,7 @@ sealed class MainForm : Form
             {
                 var link = await hub!.OpenAsync(Channel.Stream, wait, waitingForViewer.Token);
                 link.ReadTimeout = 15000;
-                host = new StreamHost(new Stream.Wire(link), source, openUdp: UdpLane(isHost: true), shareSound: settings.ShareSound) { Tally = tally };
+                host = new StreamHost(new Stream.Wire(link), source, allowInput: false, openUdp: UdpLane(isHost: true), shareSound: settings.ShareSound) { Tally = tally };
             }
             catch (Exception e)
             {
@@ -398,6 +442,8 @@ sealed class MainForm : Form
             finally { waitingForViewer?.Dispose(); waitingForViewer = null; }
 
             sharing = host;
+            controlBar?.Attach(host);
+            if (controlFromStart) host.SetControl(true);
             using var clip = settings.ShareClipboard ? new ClipboardSync(this, host.SendClipboard) : null;
             if (clip != null) host.ClipboardReceived += clip.Apply;
             var ended = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -411,6 +457,7 @@ sealed class MainForm : Form
             log?.Write(ActivityResult.OK, "Mutual: " + (first ? "streaming " + source.Describe() + " to " + p.PeerName : p.PeerName + " is back, streaming again"));
             SetShareButton("Stop sharing");
             bool onPurpose = await ended.Task;
+            controlBar?.Attach(null);
             host.Dispose();
             if (sharing == host) sharing = null;
             if (stopRequested || onPurpose) { if (!stopRequested) log?.Write(ActivityResult.INFO, "Mutual: " + p.PeerName + " closed the stream"); break; }
@@ -437,6 +484,7 @@ sealed class MainForm : Form
     void EndShare()
     {
         boxFrame?.Close(); boxFrame = null;
+        controlBar?.Close(); controlBar = null;
         SetShareButton("Stream…");
     }
 
@@ -595,6 +643,11 @@ sealed class MainForm : Form
     void StartSsh(bool answering = false)
     {
         if (pairing == null) { MessageBox.Show(this, pairingError ?? "Not paired.", "Mutual"); return; }
+        if (!SelfInstall.RunningInstalled && !SelfInstall.DevBuild)
+        {
+            MessageBox.Show(this, "SSH runs as admin, so it only runs from Mutual in Program Files (where nothing else can swap it out). Close Mutual and open it again to install it there.", "Mutual");
+            return;
+        }
         var args = "--ssh-session" + (answering ? " --no-ping" : "") + (AppSettings.Profile != null ? " --profile \"" + AppSettings.Profile + "\"" : "");
         try
         {
@@ -626,6 +679,16 @@ sealed class MainForm : Form
             activity.Items.Add(item);
         }
         activity.EndUpdate();
+    }
+
+    // wipes the activity list and mutual.log on this pc (who you talked to and when)
+    void ClearHistory()
+    {
+        if (MessageBox.Show(this, "Clear the activity list and Mutual's log on this PC? This can't be undone.", "Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        foreach (var f in new[] { log?.Path, log?.Path + ".previous", Diag.PathName, Diag.PathName + ".old" })
+            try { if (f != null && File.Exists(f)) File.Delete(f); } catch { }
+        RefreshActivity();
+        activity.Items.Clear();
     }
 
     // for tests, what this copy is doing rn as one json line

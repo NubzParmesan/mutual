@@ -1,11 +1,9 @@
-# copies publish\Mutual.exe to %LOCALAPPDATA%\Programs\Mutual (a fixed place, so the firewall rules
-# that name the program keep matching) and opens it
+# installs publish\Mutual.exe into Program Files (one admin prompt) and opens it. same thing the exe
+# offers on its own when you run it, this js skips the question
 $ErrorActionPreference = 'Stop'
-$src = Join-Path $PSScriptRoot '..\publish\Mutual.exe'
-$dest = Join-Path $env:LOCALAPPDATA 'Programs\Mutual'
-New-Item -ItemType Directory -Force $dest | Out-Null
-Get-Process Mutual -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$dest*" } | Stop-Process -Force
-Start-Sleep -Milliseconds 500
-Copy-Item $src (Join-Path $dest 'Mutual.exe') -Force
-Start-Process (Join-Path $dest 'Mutual.exe')
-Write-Host "Mutual installed at $dest"
+$src = (Resolve-Path (Join-Path $PSScriptRoot '..\publish\Mutual.exe')).Path
+$p = Start-Process $src -ArgumentList "--install-copy `"$src`"" -Verb RunAs -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw 'install failed' }
+$exe = Join-Path $env:ProgramFiles 'Mutual\Mutual.exe'
+Start-Process $exe
+Write-Host "Mutual installed at $exe"
