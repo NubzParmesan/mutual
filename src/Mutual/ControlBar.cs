@@ -14,6 +14,7 @@ sealed class ControlBar : Form
     readonly Label text = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Text, Font = Theme.Small, Padding = new Padding(10, 0, 0, 0) };
     readonly Button toggle, stop;
     StreamHost? host;
+    string? hotkey;
     public event Action? StopClicked;
 
     public ControlBar(string friend, bool wholeScreen)
@@ -42,7 +43,10 @@ sealed class ControlBar : Form
     {
         base.OnHandleCreated(e);
         SetWindowDisplayAffinity(Handle, 0x11);   // never in the stream
-        RegisterHotKey(Handle, HotkeyId, 0x1 | 0x2 | 0x4000, 0x23);   // ctrl + alt + end, no repeat
+        // another program might already own one of these, so take the first that works and show that one
+        foreach (var (mods, vk, name) in new[] { (0x1u | 0x2u, 0x23u, "Ctrl+Alt+End"), (0x1u | 0x2u, 0x7Bu, "Ctrl+Alt+F12"), (0x2u | 0x4u, 0x7Bu, "Ctrl+Shift+F12"), (0x1u | 0x2u, 0x13u, "Ctrl+Alt+Pause") })
+            if (RegisterHotKey(Handle, HotkeyId, mods | 0x4000, vk)) { hotkey = name; break; }
+        Refresh(host?.AllowInput == true);
     }
 
     // a new link (first one or after a reconnect) always starts as watch only
@@ -57,7 +61,7 @@ sealed class ControlBar : Form
     {
         if (host == null) return;
         bool on = !host.AllowInput;
-        if (on && wholeScreen && MessageBox.Show(this, friend + " will be able to use everything on this screen, not just one window.\n\nYou can take it back any time with Ctrl+Alt+End.", "Mutual",
+        if (on && wholeScreen && MessageBox.Show(this, friend + " will be able to use everything on this screen, not just one window.\n\nYou can take it back any time" + (hotkey != null ? " with " + hotkey : " with the button on the bar") + ".", "Mutual",
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         host.SetControl(on);
         Refresh(on);
@@ -70,7 +74,8 @@ sealed class ControlBar : Form
 
     void Refresh(bool controlling)
     {
-        text.Text = host == null ? "waiting for " + friend + "…" : controlling ? friend + " is using your mouse and keyboard   (Ctrl+Alt+End takes it back)" : "sharing with " + friend + ", they can only watch";
+        var back = hotkey != null ? "(" + hotkey + " takes it back)" : "(no take back key free, use this button)";
+        text.Text = host == null ? "waiting for " + friend + "…" : controlling ? friend + " is using your mouse and keyboard   " + back : "sharing with " + friend + ", they can only watch";
         BackColor = controlling ? Color.FromArgb(120, 60, 20) : Theme.Panel;
         toggle.Text = controlling ? "Take back control" : "Let them control";
         toggle.Enabled = host != null;

@@ -76,3 +76,40 @@ public class FuzzTests
         Assert.False(listen.Up);
     }
 }
+
+public class Round2Tests
+{
+    [Fact]
+    public void A_code_that_unpacks_to_gigabytes_gets_refused_fast()
+    {
+        // a few kb of compressed zeros that would unpack to 200 mb
+        using var ms = new MemoryStream();
+        using (var z = new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+        {
+            var zeros = new byte[1 << 20];
+            for (int i = 0; i < 200; i++) z.Write(zeros);
+        }
+        var code = "MUTUAL1-" + Convert.ToBase64String(ms.ToArray()).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Throws<FormatException>(() => Pairing.ReadCode(code));
+        Assert.True(sw.ElapsedMilliseconds < 2000);
+    }
+
+    [Fact]
+    public void Pointer_pixels_round_trip_and_junk_is_refused()
+    {
+        using var bmp = new System.Drawing.Bitmap(32, 20, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        bmp.SetPixel(3, 4, System.Drawing.Color.FromArgb(200, 10, 20, 30));
+        var packed = Mutual.Stream.CursorPixels.Pack(bmp);
+        using var back = Mutual.Stream.CursorPixels.Unpack(packed)!;
+        Assert.Equal(32, back.Width);
+        Assert.Equal(System.Drawing.Color.FromArgb(200, 10, 20, 30), back.GetPixel(3, 4));
+        var r = new Random(5);
+        for (int i = 0; i < 2000; i++)
+        {
+            var junk = new byte[r.Next(0, 3000)]; r.NextBytes(junk);
+            using var b = Mutual.Stream.CursorPixels.Unpack(junk);   // either null or exactly sized, never a crash
+        }
+        Assert.Null(Mutual.Stream.CursorPixels.Unpack(new byte[] { 0xFF, 0xFF, 0xFF, 0xFF }));   // 65535 x 65535
+    }
+}

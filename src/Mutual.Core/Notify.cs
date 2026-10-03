@@ -61,7 +61,8 @@ public static class Notify
         Action<Request> onRequest, CancellationToken stop)
     {
         var listener = new TcpListener(bind, port);
-        listener.Start(4);
+        listener.Start(16);
+        using var slots = new SemaphoreSlim(4);
         try
         {
             while (!stop.IsCancellationRequested)
@@ -70,12 +71,14 @@ public static class Notify
                 try { tcp = await listener.AcceptTcpClientAsync(stop); }
                 catch (OperationCanceledException) { break; }
                 catch (SocketException) { await Task.Delay(1000, stop); continue; }
-                using (tcp)
+                if (peerAddress != null && ((IPEndPoint)tcp.Client.RemoteEndPoint!).Address.ToString() != peerAddress) { tcp.Dispose(); continue; }
+                // a few at a time so one stranger holding connections open cant stall the real friends invite
+                if (!slots.Wait(0)) { tcp.Dispose(); continue; }
+                _ = Task.Run(async () =>
                 {
-                    if (peerAddress != null && ((IPEndPoint)tcp.Client.RemoteEndPoint!).Address.ToString() != peerAddress) continue;
-                    var req = await ReceiveOneAsync(tcp, own(), peerRaw, stop);
-                    if (req != null) onRequest(req);
-                }
+                    try { using (tcp) { var req = await ReceiveOneAsync(tcp, own(), peerRaw, stop); if (req != null) onRequest(req); } }
+                    finally { slots.Release(); }
+                });
             }
         }
         finally { listener.Stop(); }

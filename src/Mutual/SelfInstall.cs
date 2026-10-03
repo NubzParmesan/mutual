@@ -57,7 +57,7 @@ static class SelfInstall
         var check = Verify(me, mine);
         if (check == Check.Mismatch)
         {
-            MessageBox.Show($"This Mutual.exe doesn't match the official Mutual {mine} from github.com/{OfficialRepo}.\n\nIt might have been changed by someone. It won't be installed. Get it from the Releases page instead.",
+            MessageBox.Show($"This Mutual.exe doesn't match any official Mutual {mine} from github.com/{OfficialRepo}.\n\nIt might have been changed by someone. It won't be installed. Get it from the Releases page instead.",
                 "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
@@ -71,7 +71,7 @@ static class SelfInstall
         try
         {
             // the copy into Program Files is the only part that runs as admin
-            var p = Process.Start(new ProcessStartInfo(me, $"--install-copy \"{me}\"") { UseShellExecute = true, Verb = "runas" })!;
+            var p = Process.Start(new ProcessStartInfo(me, "--install-copy") { UseShellExecute = true, Verb = "runas" })!;
             p.WaitForExit();
             if (p.ExitCode != 0 || !File.Exists(Exe)) throw new IOException("the copy didnt finish");
             RepairShortcuts(createMissing: true);
@@ -87,9 +87,11 @@ static class SelfInstall
         }
     }
 
-    // the admin half: stop the old installed copy and put this one in Program Files
-    public static int CopyElevated(string source)
+    // the admin half: stop the old installed copy and put this one in Program Files. it only ever
+    // copies itself, never a path its handed, so nothing can launch it to sneak some other exe in
+    public static int CopyElevated()
     {
+        var source = Environment.ProcessPath!;
         try
         {
             foreach (var p in Process.GetProcessesByName("Mutual"))
@@ -134,6 +136,8 @@ static class SelfInstall
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
             var url = $"https://github.com/{OfficialRepo}/releases/download/v{v.Major}.{v.Minor}.{v.Build}/Mutual.exe.sha256";
             var resp = http.GetAsync(url).GetAwaiter().GetResult();
+            // github answered but theres no such release: a copy claiming a version that was never published
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return Check.Mismatch;
             if (!resp.IsSuccessStatusCode) return Check.Unknown;
             var want = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult().Trim().Split(' ')[0].ToLowerInvariant();
             using var f = File.OpenRead(path);

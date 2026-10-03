@@ -302,7 +302,7 @@ static class Lab
                     using var rx = new StreamReceiver(new Wire(viewLink));
                     var pointer = (x: (ushort)0, y: (ushort)0, vis: false, shape: 0); int shapes = 0;
                     rx.CursorMoved += (x, y, v, sh) => pointer = (x, y, v, sh);
-                    rx.CursorShape += (id, hx, hy, png) => { Interlocked.Increment(ref shapes); File.WriteAllBytes(Path.Combine(Path.GetTempPath(), $"mutual-cursor-{id}.png"), png); };
+                    rx.CursorShape += (id, hx, hy, px) => { Interlocked.Increment(ref shapes); using var bm = CursorPixels.Unpack(px); bm?.Save(Path.Combine(Path.GetTempPath(), $"mutual-cursor-{id}.png")); };
                     var t0 = Stopwatch.StartNew();
                     while (rx.Info == null && t0.ElapsedMilliseconds < 5000) Thread.Sleep(20);
                     Console.WriteLine(rx.Info == null ? "no stream info!" : $"stream {rx.Info.Width}x{rx.Info.Height}");

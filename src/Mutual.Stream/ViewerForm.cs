@@ -124,16 +124,15 @@ public sealed class ViewerForm : Form, IMessageFilter
     (ushort x, ushort y)? localPointer;
     PointerOverlay? overlay;
 
-    void AddShape(int id, int hx, int hy, byte[] png)
+    void AddShape(int id, int hx, int hy, byte[] pixels)
     {
         try
         {
-            // a pointer is small, anything big or weird from the other side gets ignored
-            if (png.Length > 256 * 1024 || shapes.Count > 256) return;
-            using var ms = new MemoryStream(png);
-            using var loaded = new Bitmap(ms);
-            if (loaded.Width > 256 || loaded.Height > 256 || hx < 0 || hy < 0 || hx >= loaded.Width || hy >= loaded.Height) return;
-            var bmp = new Bitmap(loaded);
+            // raw pixels checked by hand, anything big or weird from the other side gets ignored
+            if (shapes.Count > 256) return;
+            var bmp = CursorPixels.Unpack(pixels);
+            if (bmp == null) return;
+            if (hx < 0 || hy < 0 || hx >= bmp.Width || hy >= bmp.Height) { bmp.Dispose(); return; }
             shapes[id] = (bmp, CursorFactory.Make(bmp, hx, hy), new Point(hx, hy));
             UpdatePointer();
         }

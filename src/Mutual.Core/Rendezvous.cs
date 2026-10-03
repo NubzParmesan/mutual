@@ -21,6 +21,7 @@ public sealed class Rendezvous : IDisposable
     readonly object writeLock = new();
     Upnp.Mapping[] mappings = Array.Empty<Upnp.Mapping>();
     long lastSentTs, lastSeenTs;
+    string SeenPath => Path.Combine(p.Folder, "rendezvous-seen.txt");
 
     // somewhere you can reach them directly, their upnp port or their lan address if youre on the same network
     public event Action<string>? Found;
@@ -35,6 +36,8 @@ public sealed class Rendezvous : IDisposable
         host = parts[0]; port = parts.Length > 1 ? int.Parse(parts[1]) : 28810;
         p = pairing;
         me = Convert.ToHexString(SHA256.HashData(p.Own.RawData))[..16];
+        // the newest relayed invite already taken, kept on disk so a restart doesnt reopen the replay window
+        try { if (File.Exists(SeenPath)) lastSeenTs = long.Parse(File.ReadAllText(SeenPath)); } catch { }
     }
 
     // stays connected and reconnects until cancelled
@@ -126,6 +129,7 @@ public sealed class Rendezvous : IDisposable
             // too old or not newer than the last one, a replay
             if (Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - ts) > 120_000 || ts <= lastSeenTs) return;
             lastSeenTs = ts;
+            try { File.WriteAllText(SeenPath, ts.ToString()); } catch { }
             int kind = int.Parse(parts[0]);
             if (!Enum.IsDefined(typeof(RequestKind), (byte)kind) || parts[2].Length > 200) return;
             Request?.Invoke(new Request((RequestKind)kind, parts[2].Length > 0 ? parts[2] : null));
