@@ -100,7 +100,7 @@ static class SelfInstall
             File.Copy(source, Exe, overwrite: true);
             return 0;
         }
-        catch { return 1; }
+        catch (Exception e) { Diag.Write("install copy failed: " + e); return 1; }
     }
 
     // start menu, desktop and startup shortcuts point at the installed exe. something rewriting
