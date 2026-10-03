@@ -6,6 +6,10 @@ on:
     tags: ['v*']
   pull_request:
 
+# lets the tag build make the release and upload Mutual.exe to it
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
