@@ -12,6 +12,9 @@ public abstract class StreamSource
     public abstract Rectangle Current();
     // a point thats for sure inside it, to pick which monitor to grab
     public virtual Point Anchor => Current().Location + new Size(Current().Width / 2, Current().Height / 2);
+    // a window to grab on its own instead of the screen (0 = grab the screen). grabbing the window means
+    // whatevers on top of it never ends up in their stream, and it keeps going while its covered
+    public virtual nint CaptureWindow => 0;
 }
 
 public sealed class ScreenSource : StreamSource
@@ -38,6 +41,7 @@ public sealed class WindowSource : StreamSource
     Rectangle last;
     public WindowSource(nint handle, string title) { Handle = handle; Title = title; }
     public override string Describe() => "window: " + Title;
+    public override nint CaptureWindow => Handle;
 
     // the windows inside part (no title bar or borders), follows it around
     public override Rectangle Current()

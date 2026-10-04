@@ -72,6 +72,12 @@ public sealed class SplitColonySource : StreamSource, IInputSink, IDisposable
     // same as hitting the split key in game
     public void Toggle() => Send("T");
 
+    // only the game gets grabbed, so a notification or discord popping up over the right half stays on your screen
+    public override nint CaptureWindow
+    {
+        get { var p = Process.GetProcessesByName("RimWorldWin64").FirstOrDefault(); return p == null ? 0 : p.MainWindowHandle; }
+    }
+
     public static bool GameRunning() => Process.GetProcessesByName("RimWorldWin64").Length > 0;
 
     static Rectangle GameWindow()
