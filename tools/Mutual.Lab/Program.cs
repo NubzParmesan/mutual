@@ -9,6 +9,25 @@ static class Lab
     [System.Runtime.InteropServices.DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ShowWindow(nint h, int cmd);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern nint WindowFromPoint(Point p);
+    // copies a gpu frame back to the cpu and writes it out as a png
+    static void SaveTexture(Vortice.Direct3D11.ID3D11Device dev, Vortice.Direct3D11.ID3D11DeviceContext ctx, Vortice.Direct3D11.ID3D11Texture2D tex, int w, int h, string path)
+    {
+        var d = tex.Description;
+        d.Usage = Vortice.Direct3D11.ResourceUsage.Staging; d.BindFlags = 0; d.CPUAccessFlags = Vortice.Direct3D11.CpuAccessFlags.Read; d.MiscFlags = 0;
+        using var st = dev.CreateTexture2D(d);
+        ctx.CopyResource(st, tex);
+        var map = ctx.Map(st, 0, Vortice.Direct3D11.MapMode.Read);
+        try
+        {
+            using var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+            var bits = bmp.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+            unsafe { for (int y = 0; y < h; y++) Buffer.MemoryCopy((byte*)map.DataPointer + y * map.RowPitch, (byte*)bits.Scan0 + y * bits.Stride, bits.Stride, w * 4); }
+            bmp.UnlockBits(bits);
+            bmp.Save(path);
+        }
+        finally { ctx.Unmap(st, 0); }
+    }
+
     static int Main(string[] a)
     {
         timeBeginPeriod(1);
@@ -668,6 +687,91 @@ static class Lab
                     bool ok = off.Length == 0 && on.Contains("K 65 1") && !rx.CanControl && back.Contains("K 65 0");
                     Console.WriteLine(ok ? "PASSED" : "FAILED");
                     return ok ? 0 : 1;
+                }
+                case "splitrelay":
+                {
+                    // splitrelay: the real game, the real stream. hosts the actual splitcolony right half to a
+                    // viewer over a real link and takes the test scripts lines (M x y, D b, K vk 1, ...) on udp
+                    // 28796 as if the viewer did them, so every click goes viewer -> link -> host -> mod.
+                    // DBG and T lines go straight to the mod. SHOT path saves the next frame the viewer decodes
+                    using var src = new SplitColonySource();
+                    var wait = Stopwatch.StartNew();
+                    while (!src.Active && wait.Elapsed.TotalSeconds < 5) Thread.Sleep(100);
+                    Console.WriteLine($"split {(src.Active ? "up" : "not up yet")}, sharing {src.Current()}");
+                    using var hostId = Mutual.Core.Pairing.CreateIdentity("relay-host");
+                    using var viewId = Mutual.Core.Pairing.CreateIdentity("relay-viewer");
+                    var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); l.Start();
+                    int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port; l.Stop();
+                    var hs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Server, System.Net.IPAddress.Loopback, "", port, hostId, viewId.RawData, TimeSpan.FromSeconds(10));
+                    var vs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Client, System.Net.IPAddress.Loopback, "127.0.0.1", port, viewId, hostId.RawData, TimeSpan.FromSeconds(10));
+                    using var hostLink = hs.GetAwaiter().GetResult();
+                    using var viewLink = vs.GetAwaiter().GetResult();
+                    hostLink.ReadTimeout = viewLink.ReadTimeout = System.Threading.Timeout.Infinite;
+                    var host = new StreamHost(new Wire(hostLink), src, allowInput: true, shareSound: false);
+                    using var rx = new StreamReceiver(new Wire(viewLink));
+                    string? shotPath = null; int frameW = 0, frameH = 0;
+                    rx.FrameReady += (tex, w, h) =>
+                    {
+                        frameW = w; frameH = h;
+                        var path = Interlocked.Exchange(ref shotPath, null);
+                        if (path == null) return;
+                        try { SaveTexture(rx.Device, rx.Context, tex, w, h, path); Console.WriteLine("saved " + path); }
+                        catch (Exception e) { Console.WriteLine("shot failed: " + e.Message); }
+                    };
+                    host.Status += s => Console.WriteLine("host: " + s);
+                    rx.Ended += s => Console.WriteLine("viewer: stream ended (" + s + ")");
+
+                    // screen pixel -> the 0..65535 the viewer would send, picked so the host lands on that exact pixel
+                    ushort To(int p, int origin, int size)
+                    {
+                        int span = Math.Max(1, size - 1);
+                        int n = Math.Clamp((int)Math.Round((p - origin) * 65535.0 / span), 0, 65535);
+                        for (int d = -3; d <= 3; d++)
+                        {
+                            int c = Math.Clamp(n + d, 0, 65535);
+                            if (origin + (int)(c / 65535.0 * span) == p) return (ushort)c;
+                        }
+                        return (ushort)n;
+                    }
+                    var modEp = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 28794);
+                    using var toMod = new System.Net.Sockets.UdpClient();
+                    using var cmds = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 28796));
+                    Console.WriteLine("relay up on 28796");
+                    ushort lx = 0, ly = 0; var from = new System.Net.IPEndPoint(0, 0);
+                    var stats = Stopwatch.StartNew();
+                    while (true)
+                    {
+                        if (stats.Elapsed.TotalSeconds >= 10)
+                        {
+                            stats.Restart();
+                            Console.WriteLine($"stats: sent {host.FramesSent}, decoded {rx.FramesDecoded} at {frameW}x{frameH}, {rx.Transport}, decode {rx.DecodeMs:F1} ms, control {rx.CanControl}");
+                        }
+                        if (cmds.Available == 0) { Thread.Sleep(2); continue; }
+                        var line = System.Text.Encoding.ASCII.GetString(cmds.Receive(ref from)).Trim();
+                        var p = line.Split(' ');
+                        if (p[0] == "QUIT") break;
+                        if (p[0] == "SHOT") { shotPath = line.Substring(5); continue; }
+                        if (p[0] == "DBG" || p[0] == "T") { var b = System.Text.Encoding.ASCII.GetBytes(line); toMod.Send(b, b.Length, modEp); continue; }
+                        var r = src.Current();
+                        try
+                        {
+                            switch (p[0])
+                            {
+                                case "M":
+                                    lx = To(int.Parse(p[1]), r.X, r.Width); ly = To(int.Parse(p[2]), r.Y, r.Height);
+                                    rx.Send(new InputEvent(InputKind.Move, lx, ly, 0)); break;
+                                case "D": rx.Send(new InputEvent(InputKind.Down, lx, ly, int.Parse(p[1]))); break;
+                                case "U": rx.Send(new InputEvent(InputKind.Up, lx, ly, int.Parse(p[1]))); break;
+                                case "W": rx.Send(new InputEvent(InputKind.Wheel, lx, ly, int.Parse(p[1]))); break;
+                                case "K": rx.Send(new InputEvent(p[2] == "1" ? InputKind.KeyDown : InputKind.KeyUp, 0, 0, int.Parse(p[1]))); break;
+                                default: Console.WriteLine("didnt get: " + line); break;
+                            }
+                        }
+                        catch (FormatException) { Console.WriteLine("didnt get: " + line); }
+                    }
+                    Console.WriteLine($"done: sent {host.FramesSent}, decoded {rx.FramesDecoded}, {rx.Transport}");
+                    host.Dispose();
+                    return 0;
                 }
                 case "encbench":
                 {
