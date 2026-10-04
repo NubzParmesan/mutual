@@ -108,7 +108,7 @@ public sealed class StreamHost : IDisposable
         timeBeginPeriod(1);
         ICapture? cap = null; GpuColorConverter? conv = null; H264Encoder? enc = null;
         Size encSize = Size.Empty; Size pending = Size.Empty; var pendingSince = Stopwatch.StartNew();
-        var clock = Stopwatch.StartNew(); ClockStart = Stopwatch.GetTimestamp(); var tick = Stopwatch.StartNew();
+        var clock = Stopwatch.StartNew(); ClockStart = Stopwatch.GetTimestamp(); var tick = Stopwatch.StartNew(); bool fresh = false; double due = 0;
         var sentAt = new System.Collections.Concurrent.ConcurrentDictionary<long, long>();
         var pointer = new HostCursor();
         try
@@ -121,7 +121,8 @@ public sealed class StreamHost : IDisposable
             if (cap == null)
             {
                 // one window gets grabbed on its own (even covered) if windows can, otherwise its spot on screen
-                cap = source is WindowSource ws && WindowCapture.Supported ? new WindowCapture(ws.Handle) : DesktopCapture.ForPoint(source.Anchor);
+                var grab = source.CaptureWindow;
+                cap = grab != 0 && WindowCapture.Supported ? new WindowCapture(grab) : DesktopCapture.ForPoint(source.Anchor);
                 Status?.Invoke((paused ? "resumed: " : "sharing ") + source.Describe() + " from " + cap.MonitorName);
                 paused = false;
             }
@@ -155,15 +156,18 @@ public sealed class StreamHost : IDisposable
                     }
                 }
                 if (enc != null) try { pointer.Poll(wire, want); } catch (IOException) { running = false; break; }
-                var tex = cap.Next(want, 0);
-                if (tex == null)
-                {
-                    // nothing changed, still send a frame now and then so someone joining late gets a picture
-                    if (tick.ElapsedMilliseconds < 500) { Thread.Sleep(1); continue; }
-                    tex = cap.LastFrame;
-                    if (tex == null) { Thread.Sleep(1); continue; }
-                }
-                if (tick.Elapsed.TotalMilliseconds < 1000.0 / fps - 0.3) continue;
+                // a frame that shows up a hair early gets held till its time, not thrown out. throwing it out
+                // made anything running just over 60 (or a 144hz screen) come thru at half rate
+                if (cap.Next(want, 0) != null) fresh = true;
+                // sends go on a fixed beat off the clock. restarting a timer each send let every late wakeup add up
+                double now = clock.Elapsed.TotalMilliseconds;
+                if (now < due) { Thread.Sleep(1); continue; }
+                // nothing changed, still send a frame now and then so someone joining late gets a picture
+                if (!fresh && tick.ElapsedMilliseconds < 500) { Thread.Sleep(1); continue; }
+                var tex = cap.LastFrame;
+                if (tex == null) { Thread.Sleep(1); continue; }
+                fresh = false;
+                due = Math.Max(due + 1000.0 / fps, now - 1000.0 / fps);
                 tick.Restart();
                 if (enc == null || conv == null || want.Size != encSize) continue;
                 // switching lanes (udp came up or fell back to tcp) starts the viewer over from a keyframe
