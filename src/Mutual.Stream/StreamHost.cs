@@ -108,7 +108,7 @@ public sealed class StreamHost : IDisposable
         timeBeginPeriod(1);
         ICapture? cap = null; GpuColorConverter? conv = null; H264Encoder? enc = null;
         Size encSize = Size.Empty; Size pending = Size.Empty; var pendingSince = Stopwatch.StartNew();
-        var clock = Stopwatch.StartNew(); ClockStart = Stopwatch.GetTimestamp(); var tick = Stopwatch.StartNew(); bool fresh = false; double due = 0;
+        var clock = Stopwatch.StartNew(); ClockStart = Stopwatch.GetTimestamp(); var tick = Stopwatch.StartNew(); bool fresh = false; double due = 0; nint grabbed = 0; var regrab = Stopwatch.StartNew();
         var sentAt = new System.Collections.Concurrent.ConcurrentDictionary<long, long>();
         var pointer = new HostCursor();
         try
@@ -121,13 +121,29 @@ public sealed class StreamHost : IDisposable
             if (cap == null)
             {
                 // one window gets grabbed on its own (even covered) if windows can, otherwise its spot on screen
-                var grab = source.CaptureWindow;
+                grabbed = source.CaptureWindow;
+                var grab = grabbed;
                 cap = grab != 0 && WindowCapture.Supported ? new WindowCapture(grab) : DesktopCapture.ForPoint(source.Anchor);
                 Status?.Invoke((paused ? "resumed: " : "sharing ") + source.Describe() + " from " + cap.MonitorName);
                 paused = false;
             }
             while (running)
             {
+                // the game restarted (new window) or opened after we started on the screen: grab the new one
+                // instead of freezing on a dead window. if its just closed, stay frozen on the last picture,
+                // falling back to the screen there would show them your desktop
+                if (regrab.ElapsedMilliseconds > 1000)
+                {
+                    regrab.Restart();
+                    var now0 = source.CaptureWindow;
+                    if (now0 != 0 && now0 != grabbed && WindowCapture.Supported)
+                    {
+                        Status?.Invoke("the window went away or came back, grabbing it again");
+                        enc?.Dispose(); conv?.Dispose(); cap?.Dispose();
+                        enc = null; conv = null; cap = null; liveEncoder = null; encSize = Size.Empty;
+                        break;
+                    }
+                }
                 var want = cap.Normalize(source.Current());
                 // only rebuild once the size settles, not every pixel of a drag
                 if (want.Size != encSize)
@@ -192,7 +208,7 @@ public sealed class StreamHost : IDisposable
             }
           }
         }
-        catch (Exception e) when (running) { Failure = e; Status?.Invoke("stream stopped: " + e.Message); }
+        catch (Exception e) { if (running) { Failure = e; Status?.Invoke("stream stopped: " + e.Message); } }   // a throw during shutdown would kill the app off this thread
         finally
         {
             running = false;

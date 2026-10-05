@@ -139,7 +139,7 @@ public sealed class StreamReceiver : IDisposable
                 }
             }
         }
-        catch (Exception e) when (running) { why = "stream broke: " + e.Message; }
+        catch (Exception e) { if (running) why = "stream broke: " + e.Message; }   // a throw during shutdown would kill the app off this thread
         running = false;
         Ended?.Invoke(why);
     }

@@ -154,7 +154,9 @@ public sealed class H264Encoder : IDisposable
                 else if (type == METransformHaveOutput) Drain();
             }
         }
-        catch (Exception e) when (running) { Failure = e; }
+        // anything thrown while shutting down (the mft refusing input after the flush) is expected, and
+        // letting it escape this thread would take the whole app down with it
+        catch (Exception e) { if (running) Failure = e; }
     }
 
     void RunSync()
@@ -169,7 +171,7 @@ public sealed class H264Encoder : IDisposable
                 Drain();
             }
         }
-        catch (Exception e) when (running) { Failure = e; }
+        catch (Exception e) { if (running) Failure = e; }
     }
 
     void Drain()
