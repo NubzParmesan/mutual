@@ -114,6 +114,7 @@ static class Program
                         form.StartStream(new BoxSource(new Rectangle(n[0], n[1], n[2], n[3])));
                         break;
                     case "send-file": form.SendFile(parts[1]); break;
+                    case "play-rimworld": form.PlayRimWorldNow(); break;
                     case "sever-after":
                         // testing reconnect, the link js dies a few seconds in
                         var s2 = new System.Windows.Forms.Timer { Interval = int.Parse(parts[1]) * 1000 };

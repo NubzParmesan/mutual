@@ -688,6 +688,36 @@ static class Lab
                     Console.WriteLine(ok ? "PASSED" : "FAILED");
                     return ok ? 0 : 1;
                 }
+                case "pairbegin":
+                case "pairfinish":
+                {
+                    // pairbegin profile name address: makes a --profile copy (own ports, auto accept, no install
+                    // offer) and prints its pairing code. pairfinish profile code friendaddress: saves the pairing
+                    // and prints the safety code to read out. for live tests on a pc nobody is sitting at
+                    string profile = a[1];
+                    var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Mutual", "profiles", profile);
+                    Directory.CreateDirectory(dir);
+                    var idPath = Path.Combine(dir, "identity.bin");
+                    var myPorts = new Mutual.Core.Ports(Ping: 28892, Stream: 28900, Consent: 28890);
+                    if (a[0] == "pairbegin")
+                    {
+                        if (!File.Exists(idPath))
+                            File.WriteAllBytes(idPath, Mutual.Core.Dpapi.Protect(Mutual.Core.Pairing.CreateIdentity("Mutual " + a[2]).Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx)));
+                        File.WriteAllText(Path.Combine(dir, "settings.json"), System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            MyName = a[2], HandlePings = true, Rendezvous = "", UseUpnp = false, ShareSound = true, ShareClipboard = false,
+                            DeclinedInstall = true, ShortcutsMade = true, AutoAccept = true,
+                        }));
+                    }
+                    using var id = new System.Security.Cryptography.X509Certificates.X509Certificate2(Mutual.Core.Dpapi.Unprotect(File.ReadAllBytes(idPath)), (string?)null,
+                        System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.UserKeySet | System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable);
+                    if (a[0] == "pairbegin") { Console.WriteLine(Mutual.Core.Pairing.MakeCode(a[2], id, myPorts, new[] { a[3] })); return 0; }
+                    var offer = Mutual.Core.Pairing.ReadCode(a[2]);
+                    var pairing = Mutual.Core.Pairing.FromOffer(offer, id, dir, myPorts, a[3]);
+                    Console.WriteLine($"paired with {offer.Name} at {a[3]}, their ports {offer.Ports}, role {pairing.Role}");
+                    Console.WriteLine("safety code: " + Mutual.Core.Pairing.SafetyCodeFor(id.RawData, offer.Cert));
+                    return 0;
+                }
                 case "splitrelay":
                 {
                     // splitrelay: the real game, the real stream. hosts the actual splitcolony right half to a

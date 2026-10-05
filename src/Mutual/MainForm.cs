@@ -309,6 +309,8 @@ sealed class MainForm : Form
 
     bool EnsureFirewall()
     {
+        // test profiles run a dev build thats already let thru, and nobodys there to click the prompt
+        if (settings.AutoAccept) return true;
         var missing = StreamPort.Missing(pairing!);
         if (missing.Count == 0) return true;
         var ok = MessageBox.Show(this, "This needs firewall rules on this PC: only " + pairing!.PeerName + "'s address, only Mutual, only its ports.\n\nWindows will ask for admin once.",
@@ -542,6 +544,9 @@ sealed class MainForm : Form
     }
 
     // rimworld
+
+    // for --do play-rimworld
+    public void PlayRimWorldNow() => _ = PlayRimWorld();
 
     // starts rimworld thru steam if its not open, turns the split on and streams them the right half
     // their mouse and keys go to the mod, you keep the left half
