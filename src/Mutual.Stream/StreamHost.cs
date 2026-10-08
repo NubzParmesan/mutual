@@ -14,7 +14,8 @@ public sealed class StreamHost : IDisposable
     int bitrate;
     readonly int maxBitrate;
     readonly UdpVideo? udp;
-    readonly SoundCapture? sound;
+    SoundCapture? sound;
+    OpusPacker? opus;
     H264Encoder? liveEncoder;
     bool udpWasUp;
     readonly Thread captureThread, inputThread;
@@ -82,16 +83,7 @@ public sealed class StreamHost : IDisposable
             }
             catch (Exception e) { udp?.Dispose(); udp = null; Status?.Invoke("udp unavailable, video stays on tcp: " + e.Message); }
         }
-        if (shareSound)
-        {
-            sound = new SoundCapture();
-            var opus = new OpusPacker();
-            sound.Chunk += (_, pcm) =>
-            {
-                foreach (var packed in opus.Add(pcm))
-                    try { if (udp?.Up == true) udp.SendAudio(packed); else wire.Send(Msg.Audio, packed); } catch { }
-            };
-        }
+        if (shareSound) { opus = new OpusPacker(); StartSound(); }
         captureThread = new Thread(CaptureLoop) { IsBackground = true, Name = "mutual capture" };
         inputThread = new Thread(InputLoop) { IsBackground = true, Name = "mutual host input" };
         captureThread.Start();
@@ -139,6 +131,7 @@ public sealed class StreamHost : IDisposable
                     if (now0 != 0 && now0 != grabbed && WindowCapture.Supported)
                     {
                         Status?.Invoke("the window went away or came back, grabbing it again");
+                        if (opus != null) StartSound();   // new game process, so its sound is a new program too
                         enc?.Dispose(); conv?.Dispose(); cap?.Dispose();
                         enc = null; conv = null; cap = null; liveEncoder = null; encSize = Size.Empty;
                         break;
@@ -271,6 +264,54 @@ public sealed class StreamHost : IDisposable
         liveEncoder?.SetBitrate(next);
         Status?.Invoke($"bitrate {next / 1_000_000.0:F1} Mbit/s (loss {st.Loss:P1}, {st.Transport})");
     }
+
+    // sound: sharing a game or a window sends just that program's sound. otherwise its everything except
+    // discord. grabbing everything sent your friend's own voice back to them out of your speakers
+    void StartSound()
+    {
+        var (pid, include) = SoundTarget();
+        var old = sound;
+        var next = new SoundCapture(pid, include);
+        next.Chunk += (_, pcm) =>
+        {
+            if (!ReferenceEquals(sound, next) || opus == null) return;
+            foreach (var packed in opus.Add(pcm))
+                try { if (udp?.Up == true) udp.SendAudio(packed); else wire.Send(Msg.Audio, packed); } catch { }
+        };
+        sound = next;
+        old?.Dispose();
+        Task.Delay(400).ContinueWith(_ => { if (ReferenceEquals(sound, next)) Status?.Invoke("sound: " + next.Grabbing); });
+    }
+
+    (int pid, bool include) SoundTarget()
+    {
+        var w = source.CaptureWindow;
+        if (w != 0 && GetWindowThreadProcessId(w, out uint pid) != 0 && pid != 0) return ((int)pid, true);
+        var discord = TopProcess("Discord", "DiscordPTB", "DiscordCanary");
+        return discord != 0 ? (discord, false) : (0, true);
+    }
+
+    // the one at the top of the tree (the others are its children), so excluding it covers all of them
+    static int TopProcess(params string[] names)
+    {
+        var ids = new HashSet<int>();
+        foreach (var n in names) foreach (var p in Process.GetProcessesByName(n)) { ids.Add(p.Id); p.Dispose(); }
+        foreach (var id in ids)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(id);
+                var pbi = new PROCESS_BASIC_INFORMATION();
+                if (NtQueryInformationProcess(p.Handle, 0, ref pbi, Marshal.SizeOf<PROCESS_BASIC_INFORMATION>(), out _) == 0 && !ids.Contains((int)pbi.InheritedFromUniqueProcessId))
+                    return id;
+            }
+            catch { }
+        }
+        return 0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION { public nint ExitStatus, PebBaseAddress, AffinityMask, BasePriority, UniqueProcessId, InheritedFromUniqueProcessId; }
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(nint process, int infoClass, ref PROCESS_BASIC_INFORMATION info, int size, out int returned);
 
     // playing their input back
 

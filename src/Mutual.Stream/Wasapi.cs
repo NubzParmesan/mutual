@@ -85,5 +85,54 @@ static class Wasapi
         return (T)s;
     }
 
+    // just one program's sound (and whatever it starts), or everything except one program. needs a
+    // newer windows 10, older ones throw and the caller falls back to everything the speakers play
+    public static IAudioClient ProcessLoopback(int pid, bool include)
+    {
+        var prm = new ActivationParams { type = 1 /* process loopback */, pid = (uint)pid, mode = include ? 0 : 1 };
+        int size = Marshal.SizeOf<ActivationParams>();
+        nint blob = Marshal.AllocHGlobal(size), pv = Marshal.AllocHGlobal(24);
+        try
+        {
+            Marshal.StructureToPtr(prm, blob, false);
+            // PROPVARIANT holding a VT_BLOB that points at the params
+            for (int i = 0; i < 24; i += 8) Marshal.WriteInt64(pv, i, 0);
+            Marshal.WriteInt16(pv, 0, 65 /* VT_BLOB */);
+            Marshal.WriteInt32(pv, 8, size);
+            Marshal.WriteIntPtr(pv, 16, blob);
+            var done = new Activated();
+            var iid = typeof(IAudioClient).GUID;
+            Check(ActivateAudioInterfaceAsync(@"VAD\Process_Loopback", ref iid, pv, done, out var op), "one program's sound");
+            if (!done.Wait.WaitOne(5000)) throw new InvalidOperationException("one program's sound didn't open in time");
+            Check(op.GetActivateResult(out int hr, out var client), "one program's sound result");
+            Check(hr, "one program's sound");
+            return (IAudioClient)client;
+        }
+        finally { Marshal.FreeHGlobal(blob); Marshal.FreeHGlobal(pv); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct ActivationParams { public int type; public uint pid; public int mode; }
+
+    [DllImport("Mmdevapi.dll", ExactSpelling = true, PreserveSig = true)]
+    static extern int ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid iid, nint activationParams,
+        IActivateCompletion handler, out IActivateOperation op);
+
+    [ComImport, Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IActivateOperation { [PreserveSig] int GetActivateResult(out int hr, [MarshalAs(UnmanagedType.IUnknown)] out object iface); }
+
+    [ComImport, Guid("41D949AB-9862-444A-80F6-C261334DA5EB"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IActivateCompletion { [PreserveSig] int ActivateCompleted(IActivateOperation op); }
+
+    // windows calls this back on its own thread, so it has to say its fine being called from anywhere
+    [ComImport, Guid("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAgileObject { }
+
+    [ClassInterface(ClassInterfaceType.None)]
+    sealed class Activated : IActivateCompletion, IAgileObject
+    {
+        public readonly ManualResetEvent Wait = new(false);
+        public int ActivateCompleted(IActivateOperation op) { Wait.Set(); return 0; }
+    }
+
     public static void Check(int hr, string what) { if (hr < 0) throw new InvalidOperationException($"{what} (0x{hr:X8})"); }
 }

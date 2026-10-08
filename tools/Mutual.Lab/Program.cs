@@ -688,6 +688,50 @@ static class Lab
                     Console.WriteLine(ok ? "PASSED" : "FAILED");
                     return ok ? 0 : 1;
                 }
+                case "appsound":
+                {
+                    // appsound: plays a quiet tone from this process, then records just this process (should hear it)
+                    // and everything except this process (shouldnt). checks that sound can be split by program
+                    using var player = new SoundPlayer { Volume = 0.15f };
+                    uint seq = 0; bool playing = true;
+                    var tone = new Thread(() =>
+                    {
+                        double ph = 0;
+                        var sw = Stopwatch.StartNew(); long sent = 0;
+                        while (playing)
+                        {
+                            while (sent < sw.ElapsedMilliseconds / 5 + 8)
+                            {
+                                var pcm = new byte[SoundCapture.ChunkFrames * 4];
+                                for (int i = 0; i < SoundCapture.ChunkFrames; i++)
+                                {
+                                    short v = (short)(Math.Sin(ph) * 8000); ph += 2 * Math.PI * 440 / 48000;
+                                    BitConverter.TryWriteBytes(pcm.AsSpan(i * 4), v); BitConverter.TryWriteBytes(pcm.AsSpan(i * 4 + 2), v);
+                                }
+                                player.Add(SoundCapture.Pack(++seq, pcm)); sent++;
+                            }
+                            Thread.Sleep(2);
+                        }
+                    }) { IsBackground = true };
+                    tone.Start();
+                    Thread.Sleep(500);
+                    double Loudness(int pid, bool include)
+                    {
+                        double sum = 0; long n = 0;
+                        using var cap = new SoundCapture(pid, include);
+                        cap.Chunk += (_, pcm) => { for (int i = 0; i + 1 < pcm.Length; i += 2) { double s = BitConverter.ToInt16(pcm, i); sum += s * s; n++; } };
+                        Thread.Sleep(1500);
+                        Console.WriteLine($"  {(include ? "just this program" : "everything but this program")}: grabbing {cap.Grabbing}" + (cap.Failure != null ? " FAILED " + cap.Failure.Message : ""));
+                        return n == 0 ? 0 : Math.Sqrt(sum / n);
+                    }
+                    int me = Environment.ProcessId;
+                    double inc = Loudness(me, true), exc = Loudness(me, false);
+                    playing = false;
+                    Console.WriteLine($"tone loudness: just this program {inc:F0}, everything but this program {exc:F0}");
+                    bool ok = inc > 200 && exc < inc / 10;
+                    Console.WriteLine(ok ? "PASSED: sound splits by program" : "FAILED");
+                    return ok ? 0 : 1;
+                }
                 case "pairbegin":
                 case "pairfinish":
                 {

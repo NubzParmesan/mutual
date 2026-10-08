@@ -12,9 +12,15 @@ public sealed class SoundCapture : IDisposable
     volatile bool running = true;
     public event Action<uint, byte[]>? Chunk;
     public Exception? Failure { get; private set; }
+    // what its actually grabbing, for the log
+    public string Grabbing { get; private set; } = "everything the speakers play";
+    readonly int pid; readonly bool include;
 
-    public SoundCapture()
+    // pid 0 = everything the speakers play. otherwise just that program's sound (include) or everything
+    // but that program (exclude), if this windows can do that
+    public SoundCapture(int pid = 0, bool include = true)
     {
+        this.pid = pid; this.include = include;
         thread = new Thread(Run) { IsBackground = true, Name = "mutual sound capture", Priority = ThreadPriority.AboveNormal };
         thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
@@ -25,7 +31,12 @@ public sealed class SoundCapture : IDisposable
         Wasapi.IAudioClient? client = null;
         try
         {
-            client = Wasapi.DefaultSpeakers();
+            if (pid != 0)
+            {
+                try { client = Wasapi.ProcessLoopback(pid, include); Grabbing = include ? "just the shared program's sound" : "everything except " + ProcessName(pid); }
+                catch (Exception e) { Grabbing = "everything the speakers play (this windows can't split sound by program: " + e.Message + ")"; }
+            }
+            client ??= Wasapi.DefaultSpeakers();
             var fmt = Wasapi.WaveFormatEx.Pcm16(Wasapi.SampleRate, Wasapi.Channels);
             Wasapi.Check(client.Initialize(0, Wasapi.LOOPBACK | Wasapi.AUTOCONVERTPCM | Wasapi.SRC_DEFAULT_QUALITY, 200_000, 0, ref fmt, 0), "loopback capture");
             var cap = Wasapi.Service<Wasapi.IAudioCaptureClient>(client);
@@ -58,6 +69,8 @@ public sealed class SoundCapture : IDisposable
     }
 
     public void Dispose() { running = false; thread.Join(500); }
+
+    static string ProcessName(int pid) { try { return System.Diagnostics.Process.GetProcessById(pid).ProcessName; } catch { return "pid " + pid; } }
 
     public static byte[] Pack(uint seq, byte[] pcm)
     {
