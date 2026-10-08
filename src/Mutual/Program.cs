@@ -55,8 +55,15 @@ static class Program
         }
 
         if (!args.Contains("--snapshot") && !args.Contains("--snapshot-pair") && !SelfInstall.Offer(settings)) return 0;
-        using var single = new Mutex(true, @"Local\Mutual-App" + (AppSettings.Profile == null ? "" : "-" + AppSettings.Profile), out bool first);
-        if (!first) return 0;
+        var instance = @"Local\Mutual-App" + (AppSettings.Profile == null ? "" : "-" + AppSettings.Profile);
+        using var single = new Mutex(true, instance, out bool first);
+        if (!first)
+        {
+            // already running (usually hiding in the tray since login), so tell that one to show itself
+            // instead of quitting with nothing on screen
+            try { using var show = EventWaitHandle.OpenExisting(instance + "-show"); show.Set(); } catch { }
+            return 0;
+        }
         var snap = Arg("--snapshot");
         if (snap != null)
         {
@@ -81,6 +88,9 @@ static class Program
             return 0;
         }
         var form = new MainForm(settings);
+        var ui = SynchronizationContext.Current;
+        var showMe = new EventWaitHandle(false, EventResetMode.AutoReset, instance + "-show");
+        new Thread(() => { while (showMe.WaitOne()) ui?.Post(_ => form.ShowMe(), null); }) { IsBackground = true, Name = "mutual show me" }.Start();
         Automate(form, Arg("--do"), Arg("--report"));
         if (Arg("--stop-after") is { } stopAfter)
         {

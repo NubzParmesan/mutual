@@ -704,7 +704,7 @@ sealed class MainForm : Form
         watching = Watching != null, presented = Watching?.Presented ?? 0, viewerStats = sharing?.LastStats,
     });
 
-    void ShowMe() { Show(); WindowState = FormWindowState.Normal; Activate(); }
+    public void ShowMe() { Show(); WindowState = FormWindowState.Normal; Activate(); }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
