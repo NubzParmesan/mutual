@@ -54,7 +54,7 @@ static class Program
             return 0;
         }
 
-        if (!args.Contains("--snapshot") && !args.Contains("--snapshot-pair") && !SelfInstall.Offer(settings)) return 0;
+        if (!args.Contains("--snapshot") && !args.Contains("--snapshot-pair") && !SelfInstall.Offer(settings, args.Contains("--update"))) return 0;
         var instance = @"Local\Mutual-App" + (AppSettings.Profile == null ? "" : "-" + AppSettings.Profile);
         using var single = new Mutex(true, instance, out bool first);
         if (!first)
@@ -125,6 +125,7 @@ static class Program
                         break;
                     case "send-file": form.SendFile(parts[1]); break;
                     case "play-rimworld": form.PlayRimWorldNow(); break;
+                    case "update-now": _ = form.UpdateNowForTests(); break;
                     case "sever-after":
                         // testing reconnect, the link js dies a few seconds in
                         var s2 = new System.Windows.Forms.Timer { Interval = int.Parse(parts[1]) * 1000 };

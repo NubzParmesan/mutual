@@ -21,6 +21,11 @@ sealed class MainForm : Form
     readonly Label friendName = new(), friendStatus = new(), pairInfo = new();
     readonly Panel statusDot = new();
     readonly Panel setupBar = new();
+    readonly Panel updateBar = new();
+    readonly Label updateText = new();
+    Button? updateButton;
+    readonly ToolStripMenuItem trayUpdate = new("Update Mutual…") { Visible = false };
+    Updater.Release? update;
     readonly Label setupText = new();
     readonly ListView activity = new();
     readonly CancellationTokenSource quit = new();
@@ -58,6 +63,8 @@ sealed class MainForm : Form
         menu.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
         menu.Items.Add("Open log folder", null, (_, _) => Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppSettings.Dir + "\"") { UseShellExecute = true }));
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(trayUpdate);
+        trayUpdate.Click += (_, _) => { ShowMe(); _ = UpdateNow(); };
         menu.Items.Add("Quit", null, (_, _) => { quitting = true; Close(); });
         menu.Opening += (_, _) => trayLogin.Checked = Takeover.StartsAtLogin();
         trayLogin.Click += (_, _) => { try { Takeover.SetStartsAtLogin(trayLogin.Checked); } catch (Exception e) { MessageBox.Show(this, e.Message, "Mutual"); } };
@@ -68,6 +75,7 @@ sealed class MainForm : Form
         LoadPairing();
         if (offline) return;
         StartServices();
+        if (Updater.Enabled) _ = UpdateLoop(quit.Token);
         var refresh = new System.Windows.Forms.Timer { Interval = 3000 };
         refresh.Tick += (_, _) => RefreshActivity();
         refresh.Start();
@@ -99,6 +107,14 @@ sealed class MainForm : Form
         setupBar.Controls.Add(setupText);
         setupBar.Controls.Add(setupButton);
 
+        // shows when theres a newer release
+        updateBar.Dock = DockStyle.Top; updateBar.Height = 52; updateBar.BackColor = Color.FromArgb(24, 48, 40); updateBar.Padding = new Padding(16, 8, 12, 8); updateBar.Visible = false;
+        updateText.Dock = DockStyle.Fill; updateText.ForeColor = Theme.Text; updateText.Font = Theme.Small; updateText.TextAlign = ContentAlignment.MiddleLeft;
+        updateButton = Theme.Button("Update", (_, _) => _ = UpdateNow(), primary: true);
+        updateButton.Dock = DockStyle.Right; updateButton.Width = 96;
+        updateBar.Controls.Add(updateText);
+        updateBar.Controls.Add(updateButton);
+
         var actions = new TableLayoutPanel { Dock = DockStyle.Top, Height = 58, ColumnCount = 3, Padding = new Padding(12, 12, 12, 6), BackColor = Theme.Back };
         for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
         streamButton = Theme.Button("Stream…", (_, _) => { if (pairing == null) Pair(); else StartStream(); }, primary: true);
@@ -123,6 +139,7 @@ sealed class MainForm : Form
         Controls.Add(header);
         Controls.Add(actions);
         Controls.Add(setupBar);
+        Controls.Add(updateBar);
         Controls.Add(card);
         void FitColumns() => activity.Columns[1].Width = Math.Max(120, activity.ClientSize.Width - activity.Columns[0].Width - SystemInformation.VerticalScrollBarWidth);
         Resize += (_, _) => FitColumns();
@@ -222,6 +239,59 @@ sealed class MainForm : Form
         }
         _ = PresenceLoop(services.Token);
         if (settings.HandlePings) _ = ListenForPings(services.Token);
+    }
+
+    // looks for a new release now and then. the bar and tray item just say theres one, nothing
+    // downloads until you click
+    async Task UpdateLoop(CancellationToken ct)
+    {
+        try { await Task.Delay(TimeSpan.FromSeconds(20), ct); } catch { return; }
+        while (!ct.IsCancellationRequested)
+        {
+            var found = await Updater.CheckAsync();
+            if (found != null && (update == null || found.Version > update.Version))
+                BeginInvoke(() =>
+                {
+                    update = found;
+                    updateText.Text = $"Mutual {found.Version} is out (you have {Updater.Current})";
+                    updateBar.Visible = true;
+                    trayUpdate.Text = $"Update Mutual to {found.Version}";
+                    trayUpdate.Visible = true;
+                    log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
+                });
+            try { await Task.Delay(TimeSpan.FromHours(6), ct); } catch { return; }
+        }
+    }
+
+    // for --do update-now
+    public async Task UpdateNowForTests()
+    {
+        update = await Updater.CheckAsync();
+        log?.Write(ActivityResult.INFO, "Mutual: update check found " + (update == null ? "nothing newer" : update.Version.ToString()));
+        await UpdateNow();
+    }
+
+    async Task UpdateNow()
+    {
+        if (update == null || updateButton == null || !updateButton.Enabled) return;
+        if (sharing != null || waitingForViewer != null) { MessageBox.Show(this, "Stop the stream first, updating restarts Mutual.", "Mutual"); return; }
+        updateButton.Enabled = false; trayUpdate.Enabled = false;
+        updateText.Text = $"Downloading {update.Version}…";
+        try
+        {
+            var exe = await Updater.DownloadAsync(update);
+            updateText.Text = $"Installing {update.Version}, say yes to the admin prompt";
+            Updater.Launch(exe);
+            // the new copy swaps the installed one and opens itself, this one gets out of the way
+            quitting = true;
+            Close();
+        }
+        catch (Exception e)
+        {
+            Diag.Write("update failed: " + e);
+            updateText.Text = "Update failed: " + e.Message;
+            updateButton.Enabled = true; trayUpdate.Enabled = true;
+        }
     }
 
     void StopServices()

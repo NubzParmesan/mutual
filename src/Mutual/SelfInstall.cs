@@ -19,8 +19,9 @@ static class SelfInstall
     public static bool DevBuild => Environment.ProcessPath!.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar);
     static bool Same(string a, string b) => string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 
-    // true if this copy should keep running, false if it handed off to the installed one
-    public static bool Offer(AppSettings settings)
+    // true if this copy should keep running, false if it handed off to the installed one.
+    // updating = started by the updater after you clicked Update, so no second question
+    public static bool Offer(AppSettings settings, bool updating = false)
     {
         var me = Environment.ProcessPath!;
         if (AppSettings.Profile != null || DevBuild) return true;
@@ -63,7 +64,7 @@ static class SelfInstall
         }
         if (check == Check.Unknown) msg += "\n\n(Couldn't check this copy against the official release. Only say yes if you got it from github.com/" + OfficialRepo + ".)";
 
-        if (MessageBox.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        if (!(updating && check == Check.Match) && MessageBox.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
         {
             if (!installed && !fromOld) { settings.DeclinedInstall = true; settings.Save(); }
             return true;
