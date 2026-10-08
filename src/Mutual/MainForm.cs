@@ -65,6 +65,7 @@ sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(trayUpdate);
         trayUpdate.Click += (_, _) => { ShowMe(); _ = UpdateNow(); };
+        if (Updater.Enabled) menu.Items.Add("Check for updates", null, async (_, _) => { if (!await CheckForUpdate()) MessageBox.Show(this, $"You're on the newest Mutual ({Updater.Current}).", "Mutual"); });
         menu.Items.Add("Quit", null, (_, _) => { quitting = true; Close(); });
         menu.Opening += (_, _) => trayLogin.Checked = Takeover.StartsAtLogin();
         trayLogin.Click += (_, _) => { try { Takeover.SetStartsAtLogin(trayLogin.Checked); } catch (Exception e) { MessageBox.Show(this, e.Message, "Mutual"); } };
@@ -248,19 +249,27 @@ sealed class MainForm : Form
         try { await Task.Delay(TimeSpan.FromSeconds(20), ct); } catch { return; }
         while (!ct.IsCancellationRequested)
         {
-            var found = await Updater.CheckAsync();
-            if (found != null && (update == null || found.Version > update.Version))
-                BeginInvoke(() =>
-                {
-                    update = found;
-                    updateText.Text = $"Mutual {found.Version} is out (you have {Updater.Current})";
-                    updateBar.Visible = true;
-                    trayUpdate.Text = $"Update Mutual to {found.Version}";
-                    trayUpdate.Visible = true;
-                    log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
-                });
-            try { await Task.Delay(TimeSpan.FromHours(6), ct); } catch { return; }
+            await CheckForUpdate();
+            try { await Task.Delay(TimeSpan.FromHours(1), ct); } catch { return; }
         }
+    }
+
+    // true if theres a newer one (and the bar is showing it)
+    async Task<bool> CheckForUpdate()
+    {
+        var found = await Updater.CheckAsync();
+        if (found == null) return update != null;
+        if (update == null || found.Version > update.Version)
+            BeginInvoke(() =>
+            {
+                update = found;
+                updateText.Text = $"Mutual {found.Version} is out (you have {Updater.Current})";
+                updateBar.Visible = true;
+                trayUpdate.Text = $"Update Mutual to {found.Version}";
+                trayUpdate.Visible = true;
+                log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
+            });
+        return true;
     }
 
     // for --do update-now
