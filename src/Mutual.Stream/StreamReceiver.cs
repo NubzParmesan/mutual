@@ -159,22 +159,40 @@ public sealed class StreamReceiver : IDisposable
             if (ts <= lastTs && !key) return;
             lastTs = ts;
             var t0 = Stopwatch.GetTimestamp();
-            foreach (var f in decoder.Decode(h264, ts))
+            try
             {
-                try
+                foreach (var f in decoder.Decode(h264, ts))
                 {
-                    var d = f.Texture.Description;
-                    toBgra ??= new GpuColorConverter(Device, d.Width, d.Height, (uint)Info.Width, (uint)Info.Height,
-                        Format.NV12, Format.B8G8R8A8_UNorm, BindFlags.RenderTarget | BindFlags.ShaderResource);
-                    var bgra = toBgra.Convert(f.Texture, f.Slice);
-                    FramesDecoded++;
-                    DecodeMs = (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
-                    Safe(() => FrameReady?.Invoke(bgra, Info.Width, Info.Height));
+                    try
+                    {
+                        var d = f.Texture.Description;
+                        // when they resize, frames at the new size can beat the new size message here (video is
+                        // on udp, the message on tcp), so the converter follows whatever size the frames really are
+                        var size = (d.Width, d.Height, (uint)Info.Width, (uint)Info.Height);
+                        if (toBgra != null && size != toBgraSize) { toBgra.Dispose(); toBgra = null; }
+                        toBgra ??= new GpuColorConverter(Device, d.Width, d.Height, (uint)Info.Width, (uint)Info.Height,
+                            Format.NV12, Format.B8G8R8A8_UNorm, BindFlags.RenderTarget | BindFlags.ShaderResource);
+                        toBgraSize = size;
+                        var bgra = toBgra.Convert(f.Texture, f.Slice);
+                        FramesDecoded++;
+                        DecodeMs = (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
+                        Safe(() => FrameReady?.Invoke(bgra, Info.Width, Info.Height));
+                    }
+                    finally { f.Texture.Dispose(); f.Owner.Dispose(); }
                 }
-                finally { f.Texture.Dispose(); f.Owner.Dispose(); }
+            }
+            catch (Exception e) when (e is SharpGen.Runtime.SharpGenException or InvalidOperationException or ArgumentException)
+            {
+                // one frame the gpu or decoder chokes on gets skipped, not the whole app. start clean from a keyframe
+                LastDecodeError = e.Message;
+                toBgra?.Dispose(); toBgra = null;
+                try { wire.Send(Msg.KeyFrame, ReadOnlySpan<byte>.Empty); } catch { }
             }
         }
     }
+
+    (uint, uint, uint, uint) toBgraSize;
+    public string? LastDecodeError { get; private set; }
 
     // testing, cut the link without saying bye
     public void Sever() => wire.Sever();

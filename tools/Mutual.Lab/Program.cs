@@ -688,6 +688,52 @@ static class Lab
                     Console.WriteLine(ok ? "PASSED" : "FAILED");
                     return ok ? 0 : 1;
                 }
+                case "boxresize":
+                {
+                    // boxresize seconds: a custom box stream over udp that changes size every half second,
+                    // like dragging the box corner mid stream. the viewer has to keep decoding at every size
+                    double seconds = double.Parse(a[1]);
+                    using var hostId = Mutual.Core.Pairing.CreateIdentity("lab-host");
+                    using var viewId = Mutual.Core.Pairing.CreateIdentity("lab-viewer");
+                    var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); l.Start();
+                    int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port; l.Stop();
+                    var hs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Server, System.Net.IPAddress.Loopback, "", port, hostId, viewId.RawData, TimeSpan.FromSeconds(10));
+                    var vs = Mutual.Core.PeerLink.OpenAsync(Mutual.Core.LinkRole.Client, System.Net.IPAddress.Loopback, "127.0.0.1", port, viewId, hostId.RawData, TimeSpan.FromSeconds(10));
+                    using var hostLink = hs.GetAwaiter().GetResult();
+                    using var viewLink = vs.GetAwaiter().GetResult();
+                    hostLink.ReadTimeout = viewLink.ReadTimeout = System.Threading.Timeout.Infinite;
+                    int udpPort = 0;
+                    Func<byte[], UdpVideo> hostUdp = key => { var u = UdpVideo.Listen(System.Net.IPAddress.Loopback, 0, key, isHost: true); udpPort = u.Port; return u; };
+                    Func<byte[], UdpVideo> viewUdp = key => UdpVideo.Connect(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, udpPort), key, isHost: false);
+                    var box = new BoxSource(new Rectangle(0, 0, 800, 600));
+                    // something moving in the box so there are real frames
+                    AnimForm? anim = null;
+                    var t = new Thread(() => { anim = new AnimForm { StartPosition = FormStartPosition.Manual, Bounds = new Rectangle(0, 0, 1280, 900), FormBorderStyle = FormBorderStyle.None, TopMost = true, ShowInTaskbar = false }; Application.Run(anim); }) { IsBackground = true };
+                    t.SetApartmentState(ApartmentState.STA); t.Start(); Thread.Sleep(500);
+                    using var host = new StreamHost(new Wire(hostLink), box, allowInput: false, openUdp: hostUdp, shareSound: false);
+                    host.Status += st => Console.WriteLine("  host: " + st);
+                    using var rx = new StreamReceiver(new Wire(viewLink), viewUdp);
+                    var sizes = new[] { new Size(800, 600), new Size(1200, 700), new Size(640, 480), new Size(1278, 898), new Size(400, 300), new Size(1000, 999) };
+                    var sw = Stopwatch.StartNew(); int i = 0, stalls = 0;
+                    var lastW = 0;
+                    rx.InfoChanged += info => lastW = info.Width;
+                    Thread.Sleep(800);
+                    while (sw.Elapsed.TotalSeconds < seconds)
+                    {
+                        var s = sizes[i++ % sizes.Length];
+                        box.Box = new Rectangle(0, 0, s.Width, s.Height);
+                        int before = rx.FramesDecoded, sentBefore = host.FramesSent;
+                        Thread.Sleep(500);
+                        if (rx.FramesDecoded == before) { stalls++; Console.WriteLine($"  stall after resize to {s.Width}x{s.Height}: host sent {host.FramesSent - sentBefore} in that time, viewer error: {rx.LastDecodeError ?? "none"}, host failure: {host.Failure?.ToString() ?? "none"}"); }
+                    }
+                    Thread.Sleep(800);
+                    Console.WriteLine($"resized {i} times, decoded {rx.FramesDecoded}, sent {host.FramesSent}, {rx.Transport}, last width {lastW}, half seconds with no frames {stalls}"
+                        + (rx.LastDecodeError != null ? ", skipped a bad frame: " + rx.LastDecodeError : ""));
+                    bool ok = rx.FramesDecoded > i * 5 && stalls <= i / 3;
+                    Console.WriteLine(ok ? "PASSED" : "FAILED");
+                    anim?.Invoke(() => anim.Close());
+                    return ok ? 0 : 1;
+                }
                 case "appsound":
                 {
                     // appsound: plays a quiet tone from this process, then records just this process (should hear it)
