@@ -145,8 +145,12 @@ public sealed class StreamHost : IDisposable
                     if (enc == null || pendingSince.ElapsedMilliseconds > 250)
                     {
                         enc?.Dispose(); conv?.Dispose();
-                        conv = new GpuColorConverter(cap.Device, (uint)want.Width, (uint)want.Height, Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DXGI.Format.NV12);
-                        enc = new H264Encoder(cap.Device, want.Width, want.Height, fps, bitrate);
+                        // hardware encoders (amd and intel especially) refuse sizes that arent multiples of 16, and a
+                        // box you drag around lands on sizes like 1430 tall. so it encodes at the nearest multiple of
+                        // 16 below, scaled not cropped, so the picture and their mouse still line up exactly
+                        int ew = Math.Max(16, want.Width & ~15), eh = Math.Max(16, want.Height & ~15);
+                        conv = new GpuColorConverter(cap.Device, (uint)want.Width, (uint)want.Height, (uint)ew, (uint)eh, Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DXGI.Format.NV12);
+                        enc = new H264Encoder(cap.Device, ew, eh, fps, bitrate);
                         liveEncoder = enc;
                         enc.Encoded += (data, ts, key) =>
                         {
@@ -160,7 +164,7 @@ public sealed class StreamHost : IDisposable
                             if (sentAt.TryRemove(ts, out var t0)) LastEncodeMs = (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
                         };
                         encSize = want.Size;
-                        wire.SendJson(Msg.Hello, new StreamInfo(want.Width, want.Height, fps, source.Describe(), enc.Name));
+                        wire.SendJson(Msg.Hello, new StreamInfo(ew, eh, fps, source.Describe(), enc.Name));
                         keyframeWanted = true;
                     }
                 }

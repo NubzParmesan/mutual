@@ -734,6 +734,44 @@ static class Lab
                     anim?.Invoke(() => anim.Close());
                     return ok ? 0 : 1;
                 }
+                case "tone":
+                {
+                    // tone seconds: just plays a quiet 440 hz tone (the other half of appsound2)
+                    using var player = new SoundPlayer { Volume = 0.15f };
+                    double ph = 0; uint seq = 0; var sw = Stopwatch.StartNew(); long sent = 0;
+                    while (sw.Elapsed.TotalSeconds < double.Parse(a[1]))
+                    {
+                        while (sent < sw.ElapsedMilliseconds / 5 + 8)
+                        {
+                            var pcm = new byte[SoundCapture.ChunkFrames * 4];
+                            for (int i = 0; i < SoundCapture.ChunkFrames; i++) { short v = (short)(Math.Sin(ph) * 8000); ph += 2 * Math.PI * 440 / 48000; BitConverter.TryWriteBytes(pcm.AsSpan(i * 4), v); BitConverter.TryWriteBytes(pcm.AsSpan(i * 4 + 2), v); }
+                            player.Add(SoundCapture.Pack(++seq, pcm)); sent++;
+                        }
+                        Thread.Sleep(2);
+                    }
+                    return 0;
+                }
+                case "appsound2":
+                {
+                    // appsound2: another process plays a tone, then "everything except <name>" should still hear it.
+                    // this is the whole screen / box mode (everything but discord)
+                    string exclude = a.Length > 1 ? a[1] : "Discord";
+                    var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "tone 6") { UseShellExecute = false, CreateNoWindow = true })!;
+                    Thread.Sleep(700);
+                    var target = Process.GetProcessesByName(exclude).Select(p => p.Id).DefaultIfEmpty(0).First();
+                    double sum = 0; long n = 0;
+                    using (var cap = new SoundCapture(target, include: false))
+                    {
+                        cap.Chunk += (_, pcm) => { for (int i = 0; i + 1 < pcm.Length; i += 2) { double s = BitConverter.ToInt16(pcm, i); sum += s * s; n++; } };
+                        Thread.Sleep(2500);
+                        Console.WriteLine($"excluding {exclude} (pid {target}): grabbing {cap.Grabbing}, {n} samples" + (cap.Failure != null ? " FAILED " + cap.Failure.Message : ""));
+                    }
+                    try { child.Kill(); } catch { }
+                    double rms = n == 0 ? 0 : Math.Sqrt(sum / n);
+                    Console.WriteLine($"other program's tone loudness: {rms:F0}");
+                    Console.WriteLine(rms > 200 ? "PASSED: everything-except mode hears other programs" : "FAILED");
+                    return rms > 200 ? 0 : 1;
+                }
                 case "appsound":
                 {
                     // appsound: plays a quiet tone from this process, then records just this process (should hear it)
