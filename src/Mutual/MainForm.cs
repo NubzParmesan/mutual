@@ -331,6 +331,7 @@ sealed class MainForm : Form
     async Task ListenForPings(CancellationToken ct)
     {
         var p = pairing!;
+        bool said = false;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -340,10 +341,11 @@ sealed class MainForm : Form
             }
             catch (SocketException)
             {
-                // old Notifier.exe still has the port, it keeps handling pings until you hit set up
-                log?.Write(ActivityResult.INFO, "Mutual: old notifier owns the ping port, leaving pings to it");
-                BeginInvoke(RefreshSetup);
-                return;
+                // old Notifier.exe still has the port, it handles pings for now. keep checking tho: once it
+                // closes nothing would be listening and your friend would see you offline for good
+                if (!said) { log?.Write(ActivityResult.INFO, "Mutual: old notifier owns the ping port, leaving pings to it"); BeginInvoke(RefreshSetup); said = true; }
+                try { await Task.Delay(TimeSpan.FromSeconds(30), ct); } catch { return; }
+                continue;
             }
             catch (Exception) { try { await Task.Delay(5000, ct); } catch { return; } }
         }
@@ -532,7 +534,7 @@ sealed class MainForm : Form
             host.Status += s =>
             {
                 if (s == "viewer left" || s.StartsWith("stream stopped")) ended.TrySetResult(host.EndedByViewer || s.StartsWith("stream stopped"));
-                else if (s.StartsWith("video on") || s.StartsWith("udp unavailable") || s.StartsWith("paused") || s.StartsWith("resumed"))
+                else if (s.StartsWith("video on") || s.StartsWith("udp unavailable") || s.StartsWith("paused") || s.StartsWith("resumed") || s.StartsWith("sound:"))
                     BeginInvoke(() => log?.Write(ActivityResult.INFO, "Mutual: " + s));
             };
             log?.Write(ActivityResult.OK, "Mutual: " + (first ? "streaming " + source.Describe() + " to " + p.PeerName : p.PeerName + " is back, streaming again"));
@@ -579,7 +581,9 @@ sealed class MainForm : Form
         Rectangle? lastBounds = null;
         var tally = new SessionTally();
         bool summarized = false;
-        void Summary() { if (summarized || tally.Reports == 0) return; summarized = true; log?.Write(ActivityResult.OK, "Mutual: watched " + pairing!.PeerName + ": " + tally.Describe()); }
+        int soundChunks = 0;
+        // says whether any sound came thru, so "no sound" can be told apart from "sound never left their pc"
+        void Summary() { if (summarized || tally.Reports == 0) return; summarized = true; log?.Write(ActivityResult.OK, "Mutual: watched " + pairing!.PeerName + ": " + tally.Describe() + (soundChunks > 0 ? $", sound {soundChunks / 100}s" : ", no sound came thru")); }
         for (int attempt = 0; ; attempt++)
         {
             StreamReceiver rx;
@@ -588,6 +592,8 @@ sealed class MainForm : Form
                 var link = await hub.OpenAsync(Channel.Stream, wait);
                 link.ReadTimeout = 15000;
                 rx = new StreamReceiver(new Stream.Wire(link), UdpLane(isHost: false)) { Tally = tally };
+                var counted = rx;
+                rx.Ended += _ => soundChunks += counted.SoundChunks;
             }
             catch (Exception e)
             {
