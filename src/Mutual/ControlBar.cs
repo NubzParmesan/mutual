@@ -11,10 +11,11 @@ sealed class ControlBar : Form
     const int HotkeyId = 0x4D55;
     readonly string friend;
     readonly bool wholeScreen;
-    readonly Label text = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Text, Font = Theme.Small, Padding = new Padding(10, 0, 0, 0) };
-    readonly Button toggle, stop;
+    readonly Label text = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Text, Font = Theme.Small, Padding = new Padding(30, 0, 8, 0), UseMnemonic = false };
+    readonly FlatButton toggle, stop;
     StreamHost? host;
     string? hotkey;
+    bool controlling;
     public event Action? StopClicked;
 
     public ControlBar(string friend, bool wholeScreen)
@@ -25,14 +26,28 @@ sealed class ControlBar : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         BackColor = Theme.Panel;
-        Size = new Size(520, 34);
+        DoubleBuffered = true;
+        Size = new Size(600, 44);
+        Padding = new Padding(6);
         var area = Screen.PrimaryScreen!.WorkingArea;
-        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top);
-        toggle = Theme.Button("Let them control", (_, _) => Toggle(), primary: true);
-        stop = Theme.Button("Stop sharing", (_, _) => StopClicked?.Invoke());
-        foreach (var b in new[] { stop, toggle }) { b.Dock = DockStyle.Right; b.Height = 34; b.Width = b == toggle ? 150 : 110; Controls.Add(b); }
+        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + 8);
+        toggle = new FlatButton { Text = "Let them control", Glyph = Theme.Glyph.Mouse, Kind = ButtonKind.Primary, Width = 156, Dock = DockStyle.Right };
+        toggle.Click += (_, _) => Toggle();
+        stop = new FlatButton { Text = "Stop sharing", Glyph = Theme.Glyph.Stop, Width = 120, Dock = DockStyle.Right };
+        stop.Click += (_, _) => StopClicked?.Invoke();
         Controls.Add(text);
-        text.BringToFront();
+        Controls.Add(toggle);
+        Controls.Add(new Panel { Dock = DockStyle.Right, Width = 6 });
+        Controls.Add(stop);
+        // drag it out of the way by the text
+        text.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); } };
+        text.Cursor = Cursors.SizeAll;
+        text.Paint += (_, e) =>
+        {
+            // live dot
+            var c = controlling ? Theme.Warn : host == null ? Theme.Faint : Theme.Bad;
+            Theme.FillRound(e.Graphics, c, new RectangleF(12, text.Height / 2f - 5, 10, 10), 5);
+        };
         Refresh(false);
     }
 
@@ -61,7 +76,7 @@ sealed class ControlBar : Form
     {
         if (host == null) return;
         bool on = !host.AllowInput;
-        if (on && wholeScreen && MessageBox.Show(this, friend + " will be able to use everything on this screen, not just one window.\n\nYou can take it back any time" + (hotkey != null ? " with " + hotkey : " with the button on the bar") + ".", "Mutual",
+        if (on && wholeScreen && Prompt.Show(this, friend + " will be able to use everything on this screen, not just one window.\n\nYou can take it back any time" + (hotkey != null ? " with " + hotkey : " with the button on the bar") + ".", "Mutual",
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         host.SetControl(on);
         Refresh(on);
@@ -72,13 +87,24 @@ sealed class ControlBar : Form
         if (host is { AllowInput: true }) { host.SetControl(false); Refresh(false); }
     }
 
-    void Refresh(bool controlling)
+    void Refresh(bool on)
     {
-        var back = hotkey != null ? "(" + hotkey + " takes it back)" : "(no take back key free, use this button)";
-        text.Text = host == null ? "waiting for " + friend + "…" : controlling ? friend + " is using your mouse and keyboard   " + back : "sharing with " + friend + ", they can only watch";
-        BackColor = controlling ? Color.FromArgb(120, 60, 20) : Theme.Panel;
-        toggle.Text = controlling ? "Take back control" : "Let them control";
+        controlling = on;
+        var back = hotkey ?? "the button";
+        text.Text = host == null ? "Waiting for " + friend + " to join…" : on ? friend + " is using your mouse and keyboard.  " + back + " takes it back" : "Live  ·  " + friend + " is watching";
+        BackColor = on ? Color.FromArgb(74, 48, 18) : Theme.Panel;
+        toggle.Text = on ? "Take back control" : "Let them control";
+        toggle.Kind = on ? ButtonKind.Secondary : ButtonKind.Primary;
+        toggle.Width = on ? 168 : 156;
         toggle.Enabled = host != null;
+        Invalidate(true);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        using var pen = new Pen(controlling ? Theme.Warn : Theme.Line);
+        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
     }
 
     protected override void WndProc(ref Message m)
@@ -96,4 +122,6 @@ sealed class ControlBar : Form
     [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(nint h, uint a);
     [DllImport("user32.dll")] static extern bool RegisterHotKey(nint h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(nint h, int id);
+    [DllImport("user32.dll")] static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] static extern nint SendMessage(nint h, int msg, nint w, nint l);
 }

@@ -58,13 +58,13 @@ static class SelfInstall
         var check = Verify(me, mine);
         if (check == Check.Mismatch)
         {
-            MessageBox.Show($"This Mutual.exe doesn't match any official Mutual {mine} from github.com/{OfficialRepo}.\n\nIt might have been changed by someone. It won't be installed. Get it from the Releases page instead.",
+            Prompt.Show($"This Mutual.exe doesn't match any official Mutual {mine} from github.com/{OfficialRepo}.\n\nIt might have been changed by someone. It won't be installed. Get it from the Releases page instead.",
                 "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
         if (check == Check.Unknown) msg += "\n\n(Couldn't check this copy against the official release. Only say yes if you got it from github.com/" + OfficialRepo + ".)";
 
-        if (!(updating && check == Check.Match) && MessageBox.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        if (!(updating && check == Check.Match) && Prompt.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
         {
             if (!installed && !fromOld) { settings.DeclinedInstall = true; settings.Save(); }
             return true;
@@ -83,7 +83,7 @@ static class SelfInstall
         catch (System.ComponentModel.Win32Exception) { return true; }   // said no at the admin prompt
         catch (Exception e)
         {
-            MessageBox.Show("Couldn't install: " + e.Message + "\n\nRunning from here instead.", "Mutual");
+            Prompt.Show("Couldn't install: " + e.Message + "\n\nRunning from here instead.", "Mutual");
             return true;
         }
     }

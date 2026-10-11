@@ -17,7 +17,9 @@ public sealed class ViewerForm : Form, IMessageFilter
     bool fullscreen; FormBorderStyle savedBorder; Rectangle savedBounds;
     readonly System.Windows.Forms.Timer statsTimer = new() { Interval = 1000 };
     int lastFrames;
-    readonly Label stats = new() { ForeColor = Color.FromArgb(200, 200, 200), BackColor = Color.FromArgb(20, 20, 20), AutoSize = true, Font = new Font("Consolas", 8.5f) };
+    readonly Label stats = new() { ForeColor = Color.FromArgb(210, 210, 216), BackColor = Color.FromArgb(28, 28, 32), AutoSize = true, Font = new Font("Segoe UI", 8.5f), Padding = new Padding(10, 5, 10, 5), Location = new Point(10, 10) };
+    readonly Label connecting = new() { ForeColor = Color.FromArgb(150, 150, 160), BackColor = Color.Black, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11f) };
+    DateTime lastMove = DateTime.UtcNow;
 
     public ViewerForm(StreamReceiver receiver, string title)
     {
@@ -26,16 +28,18 @@ public sealed class ViewerForm : Form, IMessageFilter
         BackColor = Color.Black;
         ClientSize = new Size(1280, 720);
         KeyPreview = true;
+        connecting.Text = "Connecting to " + title + "…";
         Controls.Add(stats);
+        Controls.Add(connecting);
         Controls.Add(picture);
         stats.BringToFront();
         Resize += (_, _) => LayoutPicture();
-        rx.InfoChanged += info => Ui(() => { Text = title + " - " + info.Source; LayoutPicture(); });
+        rx.InfoChanged += info => Ui(() => { Text = title + " - " + info.Source; connecting.Visible = false; LayoutPicture(); });
         rx.FrameReady += Present;
         rx.Ended += why => Ui(() => { Text = title + " - " + why; });
         HandleCreated += (_, _) => { if (rx.Info is { } info) Text = title + " - " + info.Source; LayoutPicture(); };
 
-        picture.MouseMove += (_, e) => { localPointer = (Nx(e.X), Ny(e.Y)); rx.Send(new InputEvent(InputKind.Move, Nx(e.X), Ny(e.Y), 0)); UpdatePointer(); };
+        picture.MouseMove += (_, e) => { lastMove = DateTime.UtcNow; if (!stats.Visible) stats.Visible = true; localPointer = (Nx(e.X), Ny(e.Y)); rx.Send(new InputEvent(InputKind.Move, Nx(e.X), Ny(e.Y), 0)); UpdatePointer(); };
         picture.MouseDown += (_, e) => { buttonsDown.Add(Btn(e.Button)); rx.Send(new InputEvent(InputKind.Down, Nx(e.X), Ny(e.Y), Btn(e.Button))); };
         picture.MouseUp += (_, e) => { buttonsDown.Remove(Btn(e.Button)); rx.Send(new InputEvent(InputKind.Up, Nx(e.X), Ny(e.Y), Btn(e.Button))); };
         picture.MouseLeave += (_, _) => { localPointer = null; UpdatePointer(); };
@@ -51,7 +55,11 @@ public sealed class ViewerForm : Form, IMessageFilter
         {
             int f = rx.FramesDecoded;
             var info = rx.Info;
-            stats.Text = info == null ? "waiting for picture..." : $"{info.Width}x{info.Height}  {f - lastFrames} fps  decode {rx.DecodeMs:F1} ms  {rx.Transport}" + (rx.Transport == "udp" ? $" {rx.RttMs:F0} ms rtt  loss {rx.LastLoss:P1}" : "") + $"  {info.Encoder}" + (rx.Sound == null ? "" : rx.Sound.Muted ? "  sound muted (click)" : "  sound on (click to mute)") + (rx.CanControl ? "  you have control" : "  watch only");
+            connecting.Visible = info == null;
+            stats.Text = info == null ? "Waiting for the picture…" : (rx.CanControl ? "You have control" : "Watch only") + $"   ·   {f - lastFrames} fps   ·   {info.Width}x{info.Height}" + (rx.Transport == "udp" ? $"   ·   {rx.RttMs:F0} ms   ·   {rx.LastLoss:P1} loss" : "   ·   " + rx.Transport) + $"   ·   decode {rx.DecodeMs:F1} ms" + (rx.Sound == null ? "" : rx.Sound.Muted ? "   ·   sound off (click)" : "   ·   sound on (click to mute)") + "   ·   F11 fullscreen";
+            // gets out of the way when youre not moving the mouse, comes back when you do
+            bool near = stats.Bounds.Contains(PointToClient(MousePosition));
+            stats.Visible = info == null || near || DateTime.UtcNow - lastMove < TimeSpan.FromSeconds(3);
             lastFrames = f;
         };
         statsTimer.Start();
@@ -63,6 +71,15 @@ public sealed class ViewerForm : Form, IMessageFilter
         try { if (IsHandleCreated && !IsDisposed) BeginInvoke(a); }
         catch (InvalidOperationException) { }
     }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        int on = 1;
+        if (DwmSetWindowAttribute(Handle, 20, ref on, 4) != 0) DwmSetWindowAttribute(Handle, 19, ref on, 4);   // dark title bar
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(nint h, int attr, ref int value, int size);
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {

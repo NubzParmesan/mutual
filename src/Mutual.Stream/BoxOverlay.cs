@@ -48,7 +48,8 @@ public sealed class BoxOverlay : Form
     void LayoutCaption()
     {
         caption.SetBounds(0, 0, Width, Strip);
-        caption.Text = "  sharing this box  " + (Width - Edge * 2) + " x " + (Height - Strip - Edge) + "   (drag here to move, edges to resize)";
+        caption.Text = "   Sharing this box  ·  " + (Width - Edge * 2) + " x " + (Height - Strip - Edge) + "  ·  drag here to move, drag an edge to resize";
+        caption.Cursor = Cursors.SizeAll;
     }
 
     protected override void OnPaint(PaintEventArgs e)

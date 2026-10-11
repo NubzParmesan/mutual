@@ -49,12 +49,12 @@ static class Program
             var folder = AppSettings.Dir;
             var pairing = Pairing.SavedExists(folder) ? Pairing.Load(folder)
                 : Pairing.LegacyFolderExists(settings.PairingFolder) ? Pairing.FromLegacyFolder(settings.PairingFolder) : null;
-            if (pairing == null) { MessageBox.Show("Not paired yet.", "Mutual"); return 1; }
+            if (pairing == null) { Prompt.Show("Not paired yet.", "Mutual"); return 1; }
             Application.Run(new SshSession(pairing, sendPing: !args.Contains("--no-ping")));
             return 0;
         }
 
-        if (!args.Contains("--snapshot") && !args.Contains("--snapshot-pair") && !SelfInstall.Offer(settings, args.Contains("--update"))) return 0;
+        if (!args.Any(a => a.StartsWith("--snapshot")) && !SelfInstall.Offer(settings, args.Contains("--update"))) return 0;
         var instance = @"Local\Mutual-App" + (AppSettings.Profile == null ? "" : "-" + AppSettings.Profile);
         using var single = new Mutex(true, instance, out bool first);
         if (!first)
@@ -64,29 +64,9 @@ static class Program
             try { using var show = EventWaitHandle.OpenExisting(instance + "-show"); show.Set(); } catch { }
             return 0;
         }
-        var snap = Arg("--snapshot");
-        if (snap != null)
-        {
-            // draws the window to a png without showing it or doing any networking
-            using var f = new MainForm(settings, offline: true);
-            f.CreateControl();
-            ForceHandles(f);
-            f.PerformLayout();
-            using var bmp = new Bitmap(f.Width, f.Height);
-            f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height));
-            bmp.Save(snap);
-            return 0;
-        }
-        var snapPair = Arg("--snapshot-pair");
-        if (snapPair != null)
-        {
-            using var d = new PairDialog(settings, Path.Combine(Path.GetTempPath(), "mutual-snapshot-identity"));
-            d.CreateControl(); ForceHandles(d); d.PerformLayout();
-            using var bmp = new Bitmap(d.Width, d.Height);
-            d.DrawToBitmap(bmp, new Rectangle(0, 0, d.Width, d.Height));
-            bmp.Save(snapPair);
-            return 0;
-        }
+        if (Arg("--snapshot-ui") is { } which) return Snapshots.Run(settings, which, args[Array.IndexOf(args, "--snapshot-ui") + 2]);
+        if (Arg("--snapshot") is { } snap) return Snapshots.Run(settings, "main", snap);
+        if (Arg("--snapshot-pair") is { } snapPair) return Snapshots.Run(settings, "pair", snapPair);
         var form = new MainForm(settings);
         var ui = SynchronizationContext.Current;
         var showMe = new EventWaitHandle(false, EventResetMode.AutoReset, instance + "-show");
@@ -103,8 +83,6 @@ static class Program
         else Application.Run(form);
         return 0;
     }
-
-    static void ForceHandles(Control c) { _ = c.Handle; foreach (Control k in c.Controls) ForceHandles(k); }
 
     // lets tests drive it without clicking: --do "stream-box x y w h", "send-file path" etc
     // --report file writes a status line every second

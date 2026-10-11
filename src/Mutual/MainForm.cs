@@ -9,7 +9,7 @@ namespace Mutual;
 
 // the main window. who youre paired with, if theyre on, the buttons and whats happened
 // closing it js hides it in the tray, quit is in the tray menu
-sealed class MainForm : Form
+sealed class MainForm : DarkForm
 {
     readonly AppSettings settings;
     Pairing? pairing;
@@ -19,36 +19,30 @@ sealed class MainForm : Form
     Rendezvous? rendezvous;
     readonly NotifyIcon tray;
     readonly Label friendName = new(), friendStatus = new(), pairInfo = new();
-    readonly Panel statusDot = new();
-    readonly Panel setupBar = new();
-    readonly Panel updateBar = new();
-    readonly Label updateText = new();
-    Button? updateButton;
+    readonly Avatar avatar = new();
+    readonly Banner setupBar = new(), updateBar = new(), sessionBar = new();
+    readonly Panel header = new(), tiles = new(), welcome = new(), feedHead = new(), feedHost = new();
+    FlatButton? updateButton;
     readonly ToolStripMenuItem trayUpdate = new("Update Mutual…") { Visible = false };
     Updater.Release? update;
-    readonly Label setupText = new();
-    readonly ListView activity = new();
+    readonly ActivityList activity = new();
     readonly CancellationTokenSource quit = new();
     readonly ToolStripMenuItem trayStatus = new() { Enabled = false };
     readonly ToolStripMenuItem trayLogin = new("Start with Windows") { CheckOnClick = true };
-    Button? streamButton, sshButton, sendButton;
-    bool online, quitting;
+    Tile? streamButton, sshButton, sendButton, playButton;
+    bool online, checking = true, quitting;
     readonly bool offline;
 
     public MainForm(AppSettings s, bool offline = false)
     {
         settings = s; this.offline = offline;
         Text = AppSettings.Profile == null ? "Mutual" : "Mutual (" + AppSettings.Profile + ")";
-        BackColor = Theme.Back;
-        ForeColor = Theme.Text;
-        Font = Theme.Body;
-        ClientSize = new Size(460, 560);
-        MinimumSize = new Size(420, 420);
+        ClientSize = new Size(480, 640);
+        MinimumSize = new Size(440, 540);
         StartPosition = FormStartPosition.CenterScreen;
-        Icon = Program.AppIcon;
 
         tray = new NotifyIcon { Icon = Program.TrayIcon(false), Text = "Mutual", Visible = !offline };
-        var menu = new ContextMenuStrip();
+        var menu = Theme.Menu();
         menu.Items.Add(trayStatus);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open Mutual", null, (_, _) => ShowMe());
@@ -61,16 +55,16 @@ sealed class MainForm : Form
         menu.Items.Add("Pair with someone new…", null, (_, _) => { ShowMe(); Pair(); });
         menu.Items.Add("Settings…", null, (_, _) => { ShowMe(); OpenSettings(); });
         menu.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
-        menu.Items.Add("Open log folder", null, (_, _) => Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppSettings.Dir + "\"") { UseShellExecute = true }));
+        menu.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(trayUpdate);
         trayUpdate.Click += (_, _) => { ShowMe(); _ = UpdateNow(); };
-        if (Updater.Enabled) menu.Items.Add("Check for updates", null, async (_, _) => { if (!await CheckForUpdate()) MessageBox.Show(this, $"You're on the newest Mutual ({Updater.Current}).", "Mutual"); });
-        menu.Items.Add("Quit", null, (_, _) => { quitting = true; Close(); });
+        if (Updater.Enabled) menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdateLoud());
+        menu.Items.Add("Quit", null, (_, _) => Quit());
         menu.Opening += (_, _) => trayLogin.Checked = Takeover.StartsAtLogin();
-        trayLogin.Click += (_, _) => { try { Takeover.SetStartsAtLogin(trayLogin.Checked); } catch (Exception e) { MessageBox.Show(this, e.Message, "Mutual"); } };
+        trayLogin.Click += (_, _) => { try { Takeover.SetStartsAtLogin(trayLogin.Checked); } catch (Exception e) { Prompt.Show(this, e.Message, "Mutual"); } };
         tray.ContextMenuStrip = menu;
-        tray.DoubleClick += (_, _) => ShowMe();
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMe(); };
 
         BuildLayout();
         LoadPairing();
@@ -84,67 +78,153 @@ sealed class MainForm : Form
 
     void BuildLayout()
     {
-        var card = new Panel { BackColor = Theme.Panel, Dock = DockStyle.Top, Height = 92, Padding = new Padding(16) };
-        statusDot.SetBounds(18, 26, 12, 12);
-        statusDot.Paint += (_, e) =>
+        // who youre paired with
+        header.Dock = DockStyle.Top; header.Height = 100;
+        avatar.Location = new Point(20, 22);
+        friendName.SetBounds(86, 18, 290, 32); friendName.Font = Theme.Hero; friendName.ForeColor = Theme.Text; friendName.UseMnemonic = false; friendName.AutoEllipsis = true;
+        friendName.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        friendStatus.SetBounds(102, 51, 280, 20); friendStatus.Font = Theme.Body; friendStatus.ForeColor = Theme.Dim; friendStatus.UseMnemonic = false;
+        pairInfo.SetBounds(86, 72, 370, 18); pairInfo.ForeColor = Theme.Faint; pairInfo.Font = Theme.Small; pairInfo.AutoEllipsis = true; pairInfo.UseMnemonic = false;
+        pairInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        var more = new FlatButton { Kind = ButtonKind.Ghost, Glyph = Theme.Glyph.More, Size = new Size(36, 34), Anchor = AnchorStyles.Top | AnchorStyles.Right, TabStop = false };
+        var gear = new FlatButton { Kind = ButtonKind.Ghost, Glyph = Theme.Glyph.Settings, Size = new Size(36, 34), Anchor = AnchorStyles.Top | AnchorStyles.Right, TabStop = false };
+        header.Width = ClientSize.Width;
+        more.Location = new Point(header.Width - 16 - 36, 20);
+        gear.Location = new Point(more.Left - 38, 20);
+        gear.Click += (_, _) => OpenSettings();
+        more.Click += (_, _) => MoreMenu().Show(more, new Point(more.Width, more.Height + 2), ToolStripDropDownDirection.BelowLeft);
+        var tip = new ToolTip();
+        tip.SetToolTip(gear, "Settings"); tip.SetToolTip(more, "More");
+        header.Controls.AddRange(new Control[] { avatar, friendName, friendStatus, pairInfo, gear, more });
+        header.Paint += (_, e) =>
         {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var b = new SolidBrush(online ? Theme.Online : Theme.Offline);
-            e.Graphics.FillEllipse(b, 0, 0, 11, 11);
+            // status dot in front of the status text
+            if (pairing == null) return;
+            var c = checking ? Theme.Faint : online ? Theme.Online : Theme.Offline;
+            Theme.FillRound(e.Graphics, c, new RectangleF(88, 57, 9, 9), 4.5f);
         };
-        friendName.SetBounds(38, 16, 380, 28); friendName.Font = Theme.Title; friendName.ForeColor = Theme.Text;
-        friendStatus.SetBounds(38, 46, 380, 20); friendStatus.ForeColor = Theme.Dim;
-        pairInfo.SetBounds(38, 66, 400, 18); pairInfo.ForeColor = Theme.Dim; pairInfo.Font = Theme.Small;
-        var gear = new LinkLabel { Text = "settings", AutoSize = true, LinkColor = Theme.Dim, ActiveLinkColor = Theme.Accent, Font = Theme.Small, Anchor = AnchorStyles.Top | AnchorStyles.Right };
-        gear.Location = new Point(card.Width - 70, 10);
-        gear.LinkClicked += (_, _) => OpenSettings();
-        card.Controls.AddRange(new Control[] { statusDot, friendName, friendStatus, pairInfo, gear });
 
-        // shows until the firewall rules are in (and the old notifier is gone if you came from mutual ssh)
-        setupBar.Dock = DockStyle.Top; setupBar.Height = 64; setupBar.BackColor = Color.FromArgb(58, 44, 20); setupBar.Padding = new Padding(16, 8, 12, 8); setupBar.Visible = false;
-        setupText.Dock = DockStyle.Fill; setupText.ForeColor = Theme.Text; setupText.Font = Theme.Small;
-        var setupButton = Theme.Button("Set up…", (_, _) => RunSetup(), primary: true);
-        setupButton.Dock = DockStyle.Right; setupButton.Width = 96;
-        setupBar.Controls.Add(setupText);
-        setupBar.Controls.Add(setupButton);
+        // things that need you, only one or two show at a time
+        setupBar.Style(Theme.Glyph.Shield, Theme.Warn, Theme.WarnSoft);
+        setupBar.AddButton("Set up…", RunSetup);
+        updateBar.Style(Theme.Glyph.Update, Theme.Online, Theme.OnlineSoft);
+        updateButton = updateBar.AddButton("Update", () => _ = UpdateNow());
 
-        // shows when theres a newer release
-        updateBar.Dock = DockStyle.Top; updateBar.Height = 52; updateBar.BackColor = Color.FromArgb(24, 48, 40); updateBar.Padding = new Padding(16, 8, 12, 8); updateBar.Visible = false;
-        updateText.Dock = DockStyle.Fill; updateText.ForeColor = Theme.Text; updateText.Font = Theme.Small; updateText.TextAlign = ContentAlignment.MiddleLeft;
-        updateButton = Theme.Button("Update", (_, _) => _ = UpdateNow(), primary: true);
-        updateButton.Dock = DockStyle.Right; updateButton.Width = 96;
-        updateBar.Controls.Add(updateText);
-        updateBar.Controls.Add(updateButton);
+        // the four things you can do
+        tiles.Dock = DockStyle.Top; tiles.Height = 76 * 2 + 8 + 12; tiles.Padding = new Padding(16, 0, 16, 12);
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        streamButton = new Tile { Text = "Stream", Subtitle = "Share your screen, a window or a box", Glyph = Theme.Glyph.Screen, Kind = ButtonKind.Primary };
+        sendButton = new Tile { Text = "Send a file", Subtitle = "Or drop one on this window", Glyph = Theme.Glyph.Send, GlyphColor = Color.FromArgb(110, 170, 255) };
+        playButton = new Tile { Text = "Play RimWorld", Subtitle = "Split screen, you each get a half", Glyph = Theme.Glyph.Game, GlyphColor = Color.FromArgb(190, 130, 255) };
+        sshButton = new Tile { Text = "SSH", Subtitle = "A terminal on their PC, if they say yes", Glyph = Theme.Glyph.Terminal, GlyphColor = Theme.Online };
+        streamButton.Click += (_, _) => StartStream();
+        sendButton.Click += (_, _) => SendFile();
+        playButton.Click += (_, _) => _ = PlayRimWorld();
+        sshButton.Click += (_, _) => StartSsh();
+        foreach (var t in new[] { streamButton, sendButton, playButton, sshButton })
+        {
+            t.Dock = DockStyle.Fill; t.Margin = new Padding(4);
+            grid.Controls.Add(t);
+        }
+        tiles.Controls.Add(grid);
 
-        var actions = new TableLayoutPanel { Dock = DockStyle.Top, Height = 58, ColumnCount = 3, Padding = new Padding(12, 12, 12, 6), BackColor = Theme.Back };
-        for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
-        streamButton = Theme.Button("Stream…", (_, _) => { if (pairing == null) Pair(); else StartStream(); }, primary: true);
-        sshButton = Theme.Button("SSH", (_, _) => StartSsh());
-        sendButton = Theme.Button("Send file…", (_, _) => SendFile());
-        foreach (var b in new[] { streamButton, sshButton, sendButton }) { b.Dock = DockStyle.Fill; b.Margin = new Padding(4); actions.Controls.Add(b); }
+        // shown instead of the tiles until youre paired
+        welcome.Dock = DockStyle.Top; welcome.Height = 300; welcome.Padding = new Padding(16, 0, 16, 12);
+        var hero = new Card { Dock = DockStyle.Fill, Padding = new Padding(22, 20, 22, 18) };
+        var heroTitle = new Label { Text = "Pair with a friend to get started", Font = Theme.Title, ForeColor = Theme.Text, Dock = DockStyle.Top, Height = 34 };
+        var heroText = new Label
+        {
+            Text = "Mutual links your PC with one friend's. Stream to each other, send files, play RimWorld split screen or open SSH. Nothing happens unless the other person clicks yes.",
+            Font = Theme.Body, ForeColor = Theme.Dim, Dock = DockStyle.Top, Height = 64,
+        };
+        var steps = new StepList(new[]
+        {
+            "You each copy your pairing code and send it (Discord, text, anything)",
+            "Paste theirs in",
+            "Read the safety code to each other out loud",
+        }) { Dock = DockStyle.Top, Height = 86 };
+        var pairNow = new FlatButton { Text = "Pair with a friend", Glyph = Theme.Glyph.People, Kind = ButtonKind.Primary, Dock = DockStyle.Left, Width = 190 };
+        pairNow.Click += (_, _) => Pair();
+        var pairRow = new Panel { Dock = DockStyle.Top, Height = 46, Padding = new Padding(0, 8, 0, 0) };
+        pairRow.Controls.Add(pairNow);
+        hero.Controls.Add(pairRow);
+        hero.Controls.Add(steps);
+        hero.Controls.Add(heroText);
+        hero.Controls.Add(heroTitle);
+        welcome.Controls.Add(hero);
 
-        var header = new Label { Text = "Recent activity", Dock = DockStyle.Top, Height = 28, Padding = new Padding(16, 8, 0, 0), ForeColor = Theme.Dim };
+        // whats happened
+        feedHead.Dock = DockStyle.Top; feedHead.Height = 28;
+        feedHead.Controls.Add(new Label { Text = "ACTIVITY", Font = Theme.SmallBold, ForeColor = Theme.Faint, Location = new Point(21, 6), AutoSize = true });
+        feedHost.Dock = DockStyle.Fill; feedHost.Padding = new Padding(16, 0, 16, 16);
+        var feedCard = new Card { Dock = DockStyle.Fill, Padding = new Padding(2, 8, 2, 8) };
         activity.Dock = DockStyle.Fill;
-        activity.View = View.Details;
-        activity.HeaderStyle = ColumnHeaderStyle.None;
-        activity.FullRowSelect = true;
-        activity.BorderStyle = BorderStyle.None;
-        activity.BackColor = Theme.Back;
-        activity.ForeColor = Theme.Text;
-        activity.Columns.Add("when", 90);
-        activity.Columns.Add("what", 330);
-        var listHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 12, 12) };
-        listHost.Controls.Add(activity);
+        feedCard.Controls.Add(activity);
+        feedHost.Controls.Add(feedCard);
 
-        Controls.Add(listHost);
+        Controls.Add(feedHost);
+        Controls.Add(feedHead);
+        Controls.Add(welcome);
+        Controls.Add(tiles);
+        Controls.Add(Slot(sessionBar));
+        Controls.Add(Slot(setupBar));
+        Controls.Add(Slot(updateBar));
         Controls.Add(header);
-        Controls.Add(actions);
-        Controls.Add(setupBar);
-        Controls.Add(updateBar);
-        Controls.Add(card);
-        void FitColumns() => activity.Columns[1].Width = Math.Max(120, activity.ClientSize.Width - activity.Columns[0].Width - SystemInformation.VerticalScrollBarWidth);
-        Resize += (_, _) => FitColumns();
-        Load += (_, _) => FitColumns();
+
+        // drop a file anywhere on the window to send it
+        AllowDropEverywhere(this);
+    }
+
+    // banners get a holder for the gap under them
+    static Panel Slot(Banner b)
+    {
+        var holder = new Panel { Dock = DockStyle.Top, Height = b.Height + 10, Padding = new Padding(16, 0, 16, 10), Visible = false };
+        holder.Controls.Add(b);
+        b.Dock = DockStyle.Fill;
+        return holder;
+    }
+
+    ContextMenuStrip MoreMenu()
+    {
+        var m = Theme.Menu();
+        m.Items.Add(pairing == null ? "Pair with a friend…" : "Pair with someone new…", null, (_, _) => Pair());
+        m.Items.Add("Settings…", null, (_, _) => OpenSettings());
+        if (Updater.Enabled) m.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdateLoud());
+        m.Items.Add(new ToolStripSeparator());
+        m.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
+        m.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
+        m.Items.Add(new ToolStripSeparator());
+        m.Items.Add("Quit Mutual", null, (_, _) => Quit());
+        m.Closed += (_, _) => BeginInvoke(m.Dispose);
+        return m;
+    }
+
+    void OpenLogFolder() => Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppSettings.Dir + "\"") { UseShellExecute = true });
+
+    void Quit() { quitting = true; Close(); }
+
+    void AllowDropEverywhere(Control c)
+    {
+        c.AllowDrop = true;
+        c.DragEnter += (_, e) =>
+        {
+            e.Effect = pairing != null && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+            if (sendButton != null && sendButton.Highlight != (e.Effect == DragDropEffects.Copy)) { sendButton.Highlight = e.Effect == DragDropEffects.Copy; sendButton.Invalidate(); }
+        };
+        c.DragLeave += (_, _) => { if (sendButton is { Highlight: true }) { sendButton.Highlight = false; sendButton.Invalidate(); } };
+        c.DragDrop += (_, e) =>
+        {
+            if (sendButton != null) { sendButton.Highlight = false; sendButton.Invalidate(); }
+            if (e.Data?.GetData(DataFormats.FileDrop) is not string[] files || files.Length == 0) return;
+            var f = files.FirstOrDefault(File.Exists);
+            if (f == null) { Prompt.Show(this, "Mutual sends one file at a time, not folders. Zip the folder and drop the zip.", "Mutual"); return; }
+            if (files.Length > 1) log?.Write(ActivityResult.INFO, "Mutual: dropped " + files.Length + " things, sending just " + Path.GetFileName(f));
+            Activate();
+            SendFile(f);
+        };
+        foreach (Control k in c.Controls) AllowDropEverywhere(k);
     }
 
     // pairing
@@ -154,7 +234,8 @@ sealed class MainForm : Form
         pairing = null; pairingError = null;
         try
         {
-            if (Pairing.SavedExists(AppSettings.Dir)) pairing = Pairing.Load(AppSettings.Dir);
+            if (ignoreSaved) { }
+            else if (Pairing.SavedExists(AppSettings.Dir)) pairing = Pairing.Load(AppSettings.Dir);
             else if (AppSettings.Profile == null && Pairing.LegacyFolderExists(settings.PairingFolder)) pairing = Pairing.FromLegacyFolder(settings.PairingFolder);
         }
         catch (Exception e) { pairingError = e.Message; }
@@ -162,9 +243,9 @@ sealed class MainForm : Form
         if (pairing == null)
         {
             friendName.Text = "Not paired yet";
-            friendStatus.Text = pairingError ?? "Swap pairing codes with a friend to get started.";
-            pairInfo.Text = "";
-            if (streamButton != null) streamButton.Text = "Pair with a friend…";
+            friendStatus.Text = "You both do this once";
+            pairInfo.Text = pairingError ?? "";
+            pairInfo.ForeColor = pairingError == null ? Theme.Faint : Theme.Bad;
             log = new ActivityLog(Path.Combine(AppSettings.Dir, "activity.jsonl"));
             Directory.CreateDirectory(AppSettings.Dir);
         }
@@ -173,10 +254,20 @@ sealed class MainForm : Form
             log = new ActivityLog(Path.Combine(pairing.Folder, "activity.jsonl"));
             CheckPairingUnchanged(pairing);
             friendName.Text = pairing.PeerName;
-            pairInfo.Text = pairing.PeerAddress + "  ·  " + (pairing.IsLegacy ? "paired through Mutual SSH" : "safety code " + pairing.SafetyCode);
-            friendStatus.Text = "checking…";
-            if (streamButton != null) streamButton.Text = "Stream…";
+            pairInfo.Text = pairing.PeerAddress + "   ·   " + (pairing.IsLegacy ? "paired through Mutual SSH" : "safety code " + pairing.SafetyCode);
+            pairInfo.ForeColor = Theme.Faint;
+            checking = true;
+            friendStatus.Text = "Checking…";
         }
+        avatar.Who = activity.PeerName = pairing?.PeerName ?? "";
+        // no dot to sit behind when theres nobody
+        friendStatus.Left = pairing == null ? 86 : 102;
+        avatar.Ring = Theme.Line;
+        avatar.Invalidate();
+        header.Invalidate();
+        welcome.Visible = pairing == null;
+        tiles.Visible = pairing != null;
+        activity.Empty = pairing == null ? "Once you're paired, streams, files and SSH sessions show up here." : "Nothing yet. Stream, send a file or start SSH and it shows up here.";
         trayStatus.Text = pairing == null ? "Not paired" : pairing.PeerName + ": checking…";
         RefreshActivity();
         RefreshSetup();
@@ -189,7 +280,7 @@ sealed class MainForm : Form
         if (settings.PeerFingerprint != null && settings.PeerFingerprint != fp && !justPaired)
         {
             log?.Write(ActivityResult.FAILED, "Mutual: the pairing with " + p.PeerName + " changed without re-pairing (new safety code " + p.SafetyCode + ")");
-            if (!offline) MessageBox.Show(this, "The key Mutual trusts for " + p.PeerName + " changed, but you didn't pair again.\n\nNew safety code: " + p.SafetyCode + "\n\nIf neither of you re-paired, something on this PC changed it. Pair again and compare the safety code out loud.",
+            if (!offline) Prompt.Show(this, "The key Mutual trusts for " + p.PeerName + " changed, but you didn't pair again.\n\nNew safety code: " + p.SafetyCode + "\n\nIf neither of you re-paired, something on this PC changed it. Pair again and compare the safety code out loud.",
                 "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         settings.PeerFingerprint = fp;
@@ -263,13 +354,20 @@ sealed class MainForm : Form
             BeginInvoke(() =>
             {
                 update = found;
-                updateText.Text = $"Mutual {found.Version} is out (you have {Updater.Current})";
-                updateBar.Visible = true;
+                updateBar.Message = $"Mutual {found.Version} is out. You have {Updater.Current}.";
+                updateBar.On = true;
                 trayUpdate.Text = $"Update Mutual to {found.Version}";
                 trayUpdate.Visible = true;
                 log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
             });
         return true;
+    }
+
+    // from the menus, says something either way
+    async Task CheckForUpdateLoud()
+    {
+        if (!await CheckForUpdate()) Prompt.Show(this, $"You're on the newest Mutual ({Updater.Current}).", "Mutual");
+        else ShowMe();
     }
 
     // for --do update-now
@@ -283,13 +381,13 @@ sealed class MainForm : Form
     async Task UpdateNow()
     {
         if (update == null || updateButton == null || !updateButton.Enabled) return;
-        if (sharing != null || waitingForViewer != null) { MessageBox.Show(this, "Stop the stream first, updating restarts Mutual.", "Mutual"); return; }
+        if (sharing != null || waitingForViewer != null) { Prompt.Show(this, "Stop the stream first, updating restarts Mutual.", "Mutual"); return; }
         updateButton.Enabled = false; trayUpdate.Enabled = false;
-        updateText.Text = $"Downloading {update.Version}…";
+        updateBar.Message = $"Downloading {update.Version}…";
         try
         {
             var exe = await Updater.DownloadAsync(update);
-            updateText.Text = $"Installing {update.Version}, say yes to the admin prompt";
+            updateBar.Message = $"Installing {update.Version}. Say yes to the admin prompt.";
             Updater.Launch(exe);
             // the new copy swaps the installed one and opens itself, this one gets out of the way
             quitting = true;
@@ -298,7 +396,8 @@ sealed class MainForm : Form
         catch (Exception e)
         {
             Diag.Write("update failed: " + e);
-            updateText.Text = "Update failed: " + e.Message;
+            updateBar.Message = "Update failed: " + e.Message;
+            updateBar.Style(Theme.Glyph.Error, Theme.Bad, Theme.BadSoft);
             updateButton.Enabled = true; trayUpdate.Enabled = true;
         }
     }
@@ -315,14 +414,16 @@ sealed class MainForm : Form
         while (!ct.IsCancellationRequested && pairing != null)
         {
             bool up = await Presence.IsOnlineAsync(pairing.PeerAddress, pairing.PeerPorts.Ping) || rendezvous?.PeerOnline == true;
-            if (up != online || friendStatus.Text == "checking…")
+            if (up != online || checking)
             {
-                online = up;
-                friendStatus.Text = up ? "online" : "offline";
-                trayStatus.Text = pairing.PeerName + ": " + friendStatus.Text;
+                online = up; checking = false;
+                friendStatus.Text = up ? "Online" : "Offline";
+                trayStatus.Text = pairing.PeerName + ": " + (up ? "online" : "offline");
                 tray.Icon = Program.TrayIcon(up);
-                tray.Text = "Mutual · " + pairing.PeerName + " " + friendStatus.Text;
-                statusDot.Invalidate();
+                tray.Text = "Mutual · " + pairing.PeerName + " " + (up ? "online" : "offline");
+                avatar.Ring = up ? Theme.Online : Theme.Line;
+                avatar.Invalidate();
+                header.Invalidate();
             }
             try { await Task.Delay(online ? 15000 : 8000, ct); } catch { break; }
         }
@@ -366,10 +467,10 @@ sealed class MainForm : Form
 
     void RefreshSetup()
     {
-        if (pairing == null) { setupBar.Visible = false; return; }
+        if (pairing == null) { setupBar.On = false; return; }
         var todo = Takeover.Pending(pairing);
-        setupBar.Visible = todo.Count > 0;
-        setupText.Text = todo.Count == 0 ? "" : pairing.IsLegacy && Takeover.OldNotifierRunning()
+        setupBar.On = todo.Count > 0;
+        setupBar.Message = todo.Count == 0 ? "" : pairing.IsLegacy && Takeover.OldNotifierRunning()
             ? "Mutual isn't fully set up on this PC yet. Until it is, " + pairing.PeerName + "'s requests go to the old Notifier and you won't see stream invites."
             : "Finish setting up Mutual on this PC so " + pairing.PeerName + " can reach it.";
     }
@@ -379,11 +480,11 @@ sealed class MainForm : Form
         if (pairing == null) return;
         var todo = Takeover.Pending(pairing);
         if (todo.Count == 0) { RefreshSetup(); return; }
-        var msg = "Mutual will:\n\n• " + string.Join("\n• ", todo) + (pairing.IsLegacy ? "\n\nThe old startup shortcut is kept in " + pairing.Folder + " so this can be undone." : "") + "\n\nWindows asks for admin once.";
-        if (MessageBox.Show(this, msg, "Set up Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
+        var msg = "Finish setting up Mutual on this PC?\n\n• " + string.Join("\n• ", todo) + (pairing.IsLegacy ? "\n\nThe old startup shortcut is kept in " + pairing.Folder + " so this can be undone." : "") + "\n\nWindows asks for admin once.";
+        if (Prompt.Show(this, msg, "Set up Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
         var problem = Takeover.Run(pairing, pairing.Folder);
         log?.Write(problem == null ? ActivityResult.OK : ActivityResult.FAILED, "Mutual: setup " + (problem == null ? "done" : "incomplete: " + problem));
-        if (problem != null) MessageBox.Show(this, "Not everything worked: " + problem, "Mutual");
+        if (problem != null) Prompt.Show(this, "Not everything worked: " + problem, "Mutual");
         RefreshSetup();
         if (settings.HandlePings && !Takeover.OldNotifierRunning() && services != null) _ = ListenForPings(services.Token);
     }
@@ -394,11 +495,11 @@ sealed class MainForm : Form
         if (settings.AutoAccept) return true;
         var missing = StreamPort.Missing(pairing!);
         if (missing.Count == 0) return true;
-        var ok = MessageBox.Show(this, "This needs firewall rules on this PC: only " + pairing!.PeerName + "'s address, only Mutual, only its ports.\n\nWindows will ask for admin once.",
+        var ok = Prompt.Show(this, "This needs firewall rules on this PC: only " + pairing!.PeerName + "'s address, only Mutual, only its ports.\n\nWindows will ask for admin once.",
             "Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK;
         if (!ok) return false;
         if (StreamPort.AddRules(missing, Application.ExecutablePath, pairing.BindAddress.ToString(), pairing.PeerAddress)) { RefreshSetup(); return true; }
-        MessageBox.Show(this, "The firewall rules weren't added, so " + pairing.PeerName + " can't connect yet.", "Mutual");
+        Prompt.Show(this, "The firewall rules weren't added, so " + pairing.PeerName + " can't connect yet.", "Mutual");
         return false;
     }
 
@@ -415,7 +516,7 @@ sealed class MainForm : Form
         unanswered.RemoveAll(t => now - t > TimeSpan.FromMinutes(10));
         if (now < mutedUntil)
         {
-            log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {req.Kind} again (popups paused for a bit)");
+            log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked again for {Asked(req.Kind)} (popups paused for a bit)");
             return;
         }
         if (unanswered.Count >= 3)
@@ -425,12 +526,14 @@ sealed class MainForm : Form
             return;
         }
         string detail = req.Kind == RequestKind.File && FileTransfer.TryParse(req.Detail, out var fn, out var fs) ? fn + " (" + TransferWindow.Size(fs) + ")" : req.Detail ?? "";
-        log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {req.Kind}" + (detail.Length > 0 ? ": " + detail : ""));
+        log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {Asked(req.Kind)}" + (detail.Length > 0 ? ": " + detail : ""));
         if (settings.AutoAccept) { Accept(req); return; }
         unanswered.Add(now);
         var popup = new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); });
         popup.Show();
     }
+
+    static string Asked(RequestKind k) => k switch { RequestKind.Stream => "a stream", RequestKind.File => "a file", RequestKind.Ssh => "SSH", RequestKind.Play => "a game", _ => k.ToString() };
 
     void Accept(Request req)
     {
@@ -439,7 +542,7 @@ sealed class MainForm : Form
             case RequestKind.Ssh: StartSsh(answering: true); break;
             case RequestKind.Stream: _ = WatchStream(req.Detail); break;
             case RequestKind.File: _ = ReceiveFile(req.Detail); break;
-            default: MessageBox.Show(this, req.Kind + " isn't built yet.", "Mutual"); break;
+            default: Prompt.Show(this, req.Kind + " isn't built yet.", "Mutual"); break;
         }
     }
 
@@ -464,7 +567,7 @@ sealed class MainForm : Form
     {
         var duo = Process.GetProcessesByName("DuoCursor");
         if (duo.Length == 0 || settings.AutoAccept) return true;
-        var r = MessageBox.Show(this, "DuoCursor is running and blocks " + pairing!.PeerName + "'s mouse from reaching this PC. Close it for now?\n\n(Mutual does its job; you can start it again any time.)",
+        var r = Prompt.Show(this, "DuoCursor is running and blocks " + pairing!.PeerName + "'s mouse from reaching this PC. Close it for now?\n\n(Mutual does its job; you can start it again any time.)",
             "Mutual", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
         if (r == DialogResult.Cancel) return false;
         if (r == DialogResult.Yes) foreach (var p in duo) try { p.Kill(); } catch { }
@@ -475,6 +578,7 @@ sealed class MainForm : Form
     {
         if (pairing == null || hub == null) { if (pairing == null) Pair(); return; }
         if (sharing != null || waitingForViewer != null) { StopSharing(); return; }
+        if (share == ShareState.Rimworld) { rimCancelled = true; return; }
         var source = preset;
         if (source == null)
         {
@@ -495,7 +599,8 @@ sealed class MainForm : Form
         var p = pairing!;
         stopRequested = false;
         if (source is BoxSource box) { boxFrame = new BoxOverlay(box); boxFrame.Show(); }
-        SetShareButton("Waiting for " + p.PeerName + "… (click to cancel)");
+        shareSource = source.Describe();
+        SetShare(ShareState.Waiting);
         log?.Write(ActivityResult.INFO, "Mutual: offered to stream " + source.Describe());
         var asked = await Ask(new Request(RequestKind.Stream, source.Describe()));
         if (!asked) log?.Write(ActivityResult.INFO, "Mutual: couldn't reach " + p.PeerName + "'s Mutual; waiting anyway in case they open it");
@@ -538,14 +643,14 @@ sealed class MainForm : Form
                     BeginInvoke(() => log?.Write(ActivityResult.INFO, "Mutual: " + s));
             };
             log?.Write(ActivityResult.OK, "Mutual: " + (first ? "streaming " + source.Describe() + " to " + p.PeerName : p.PeerName + " is back, streaming again"));
-            SetShareButton("Stop sharing");
+            SetShare(ShareState.Live);
             bool onPurpose = await ended.Task;
             controlBar?.Attach(null);
             host.Dispose();
             if (sharing == host) sharing = null;
             if (stopRequested || onPurpose) { if (!stopRequested) log?.Write(ActivityResult.INFO, "Mutual: " + p.PeerName + " closed the stream"); break; }
             log?.Write(ActivityResult.INFO, "Mutual: the link to " + p.PeerName + " dropped, waiting up to a minute for it to come back");
-            SetShareButton("Reconnecting… (click to stop)");
+            SetShare(ShareState.Reconnecting);
             wait = TimeSpan.FromMinutes(1);
             first = false;
         }
@@ -568,7 +673,7 @@ sealed class MainForm : Form
     {
         boxFrame?.Close(); boxFrame = null;
         controlBar?.Close(); controlBar = null;
-        SetShareButton("Stream…");
+        SetShare(ShareState.None);
     }
 
     // joins their stream and rejoins on its own for a minute if the link drops
@@ -598,7 +703,7 @@ sealed class MainForm : Form
             catch (Exception e)
             {
                 log?.Write(ActivityResult.INFO, "Mutual: " + (attempt == 0 ? "couldn't join the stream" : "couldn't get back into the stream") + " (" + e.Message + ")");
-                if (attempt == 0 && !settings.AutoAccept) MessageBox.Show(this, "Couldn't join the stream: " + e.Message, "Mutual");
+                if (attempt == 0 && !settings.AutoAccept) Prompt.Show(this, "Couldn't join the stream: " + e.Message, "Mutual");
                 Summary();
                 return;
             }
@@ -619,9 +724,13 @@ sealed class MainForm : Form
             };
             view.FormClosed += (_, _) => { rx.Dispose(); Watching = null; closed.TrySetResult(true); };
             Watching = view; WatchingReceiver = rx;
+            watchingWhat = what ?? "screen";
+            RenderSession();
             view.Show();
             log?.Write(ActivityResult.OK, "Mutual: " + (attempt == 0 ? "watching " + pairing.PeerName + "'s stream" : "back in " + pairing.PeerName + "'s stream"));
             await closed.Task;
+            watchingWhat = null;
+            RenderSession();
             if (userClosed || rx.EndedByHost) { Summary(); return; }
             log?.Write(ActivityResult.INFO, "Mutual: lost the stream, trying to get back in");
             wait = TimeSpan.FromMinutes(1);
@@ -638,21 +747,22 @@ sealed class MainForm : Form
     async Task PlayRimWorld()
     {
         if (pairing == null || hub == null) { if (pairing == null) Pair(); return; }
-        if (sharing != null || waitingForViewer != null) { MessageBox.Show(this, "Stop the current stream first.", "Mutual"); return; }
+        if (sharing != null || waitingForViewer != null) { Prompt.Show(this, "Stop the current stream first.", "Mutual"); return; }
         if (!EnsureFirewall()) return;
         foreach (var d in Process.GetProcessesByName("DuoCursor")) try { d.Kill(); d.WaitForExit(2000); } catch { }
         if (!SplitColonySource.GameRunning())
         {
             log?.Write(ActivityResult.INFO, "Mutual: starting RimWorld");
             try { Process.Start(new ProcessStartInfo("steam://rungameid/294100") { UseShellExecute = true }); }
-            catch (Exception e) { MessageBox.Show(this, "Couldn't start RimWorld thru Steam: " + e.Message, "Mutual"); return; }
+            catch (Exception e) { Prompt.Show(this, "Couldn't start RimWorld thru Steam: " + e.Message, "Mutual"); return; }
         }
         SplitColonySource src;
         try { src = new SplitColonySource(); }
-        catch (SocketException) { MessageBox.Show(this, "Something else is already talking to the SplitColony mod.", "Mutual"); return; }
-        SetShareButton("Waiting for RimWorld…");
+        catch (SocketException) { Prompt.Show(this, "Something else is already talking to the SplitColony mod.", "Mutual"); return; }
+        rimCancelled = false;
+        SetShare(ShareState.Rimworld);
         // the mod only answers once a colony is loaded and big mod lists take a while
-        for (int i = 0; i < 600 && !src.Active; i++)
+        for (int i = 0; i < 600 && !src.Active && !rimCancelled; i++)
         {
             await Task.Delay(500);
             // game is up but no split yet, flip it
@@ -661,15 +771,76 @@ sealed class MainForm : Form
         }
         if (!src.Active)
         {
-            src.Dispose(); SetShareButton("Stream…");
-            MessageBox.Show(this, "RimWorld never turned the split on. Is the SplitColony mod enabled, and is a colony loaded?", "Mutual");
+            src.Dispose(); SetShare(ShareState.None);
+            if (rimCancelled) { log?.Write(ActivityResult.INFO, "Mutual: stopped waiting for RimWorld"); return; }
+            Prompt.Show(this, "RimWorld never turned the split on. Is the SplitColony mod enabled, and is a colony loaded?", "Mutual");
             return;
         }
         log?.Write(ActivityResult.OK, "Mutual: RimWorld split is on");
         _ = ShareAsync(src);
     }
 
-    void SetShareButton(string text) { if (streamButton != null) streamButton.Text = text; }
+    // whats going on rn, shown in the banner under your friends name and on the stream tile
+
+    enum ShareState { None, Waiting, Live, Reconnecting, Rimworld }
+    ShareState share;
+    string shareSource = "";
+    string? watchingWhat;
+    bool rimCancelled;
+
+    void SetShare(ShareState s) { share = s; RenderSession(); }
+
+    // "window: Foo" reads better as just Foo in a sentence
+    static string Nice(string describe) => describe.StartsWith("window: ") ? describe[8..] : "your " + describe;
+
+    void RenderSession()
+    {
+        if (IsDisposed || streamButton == null) return;
+        var peer = pairing?.PeerName ?? "your friend";
+        sessionBar.ClearButtons();
+        switch (share)
+        {
+            case ShareState.Waiting:
+                sessionBar.Style(Theme.Glyph.Screen, Theme.Accent, Theme.AccentSoft);
+                sessionBar.Message = "Waiting for " + peer + " to accept " + Nice(shareSource);
+                sessionBar.AddButton("Cancel", () => StopSharing(), ButtonKind.Secondary);
+                break;
+            case ShareState.Live:
+                sessionBar.Style(Theme.Glyph.Screen, Theme.Online, Theme.OnlineSoft);
+                sessionBar.Message = "Streaming " + Nice(shareSource) + " to " + peer;
+                sessionBar.AddButton("Stop", () => StopSharing(), ButtonKind.Danger);
+                break;
+            case ShareState.Reconnecting:
+                sessionBar.Style(Theme.Glyph.Warning, Theme.Warn, Theme.WarnSoft);
+                sessionBar.Message = "Lost the link to " + peer + ". Waiting up to a minute for it to come back.";
+                sessionBar.AddButton("Stop", () => StopSharing(), ButtonKind.Secondary);
+                break;
+            case ShareState.Rimworld:
+                sessionBar.Style(Theme.Glyph.Game, Theme.Accent, Theme.AccentSoft);
+                sessionBar.Message = "Waiting for RimWorld. Load a colony and the split turns on by itself.";
+                sessionBar.AddButton("Cancel", () => rimCancelled = true, ButtonKind.Secondary);
+                break;
+            default:
+                if (watchingWhat != null)
+                {
+                    sessionBar.Style(Theme.Glyph.Screen, Theme.Online, Theme.OnlineSoft);
+                    sessionBar.Message = "Watching " + peer + "'s " + (watchingWhat.StartsWith("window: ") ? watchingWhat[8..] : watchingWhat);
+                    sessionBar.AddButton("Show", () => { Watching?.Activate(); }, ButtonKind.Secondary);
+                    sessionBar.AddButton("Leave", () => Watching?.Close(), ButtonKind.Secondary);
+                }
+                break;
+        }
+        sessionBar.On = share != ShareState.None || watchingWhat != null;
+        (streamButton.Text, streamButton.Subtitle, streamButton.Highlight) = share switch
+        {
+            ShareState.Waiting => ("Waiting for " + peer + "…", "Click to cancel", true),
+            ShareState.Live => ("Streaming", "Click to stop sharing", true),
+            ShareState.Reconnecting => ("Reconnecting…", "Click to stop", true),
+            ShareState.Rimworld => ("Starting RimWorld…", "Waiting for the split", true),
+            _ => ("Stream", "Share your screen, a window or a box", false),
+        };
+        streamButton.Invalidate();
+    }
 
     // files
 
@@ -690,7 +861,7 @@ sealed class MainForm : Form
     {
         var p = pairing!;
         long size = new FileInfo(path).Length;
-        var win = new TransferWindow("Waiting for " + p.PeerName + " to accept " + Path.GetFileName(path) + "…", size);
+        var win = new TransferWindow(Path.GetFileName(path), size, sending: true, "Waiting for " + p.PeerName + " to accept…");
         win.Show();
         log?.Write(ActivityResult.INFO, "Mutual: offered " + Path.GetFileName(path) + " (" + TransferWindow.Size(size) + ")");
         try
@@ -698,7 +869,7 @@ sealed class MainForm : Form
             await Ask(new Request(RequestKind.File, FileTransfer.Describe(path)));
             using var link = await hub!.OpenAsync(Channel.File, TimeSpan.FromMinutes(10), win.Cancel.Token);
             link.ReadTimeout = link.WriteTimeout = 30000;
-            win.Text = "Sending " + Path.GetFileName(path);
+            win.Status = "Sending to " + p.PeerName;
             await FileTransfer.SendAsync(link, path, win.Progress, win.Cancel.Token);
             log?.Write(ActivityResult.OK, "Mutual: sent " + Path.GetFileName(path) + ", verified by " + p.PeerName);
         }
@@ -711,7 +882,7 @@ sealed class MainForm : Form
     {
         if (pairing == null || hub == null || !FileTransfer.TryParse(detail, out var name, out var size)) return;
         if (!EnsureFirewall()) return;
-        var win = new TransferWindow("Receiving " + name + " from " + pairing.PeerName, size);
+        var win = new TransferWindow(name, size, sending: false, "From " + pairing.PeerName + ", saving to Downloads");
         win.Show();
         try
         {
@@ -732,10 +903,10 @@ sealed class MainForm : Form
     // talks the old protocol so it still works if theyre on mutual ssh
     void StartSsh(bool answering = false)
     {
-        if (pairing == null) { MessageBox.Show(this, pairingError ?? "Not paired.", "Mutual"); return; }
+        if (pairing == null) { Prompt.Show(this, pairingError ?? "Not paired.", "Mutual"); return; }
         if (!SelfInstall.RunningInstalled && !SelfInstall.DevBuild)
         {
-            MessageBox.Show(this, "SSH runs as admin, so it only runs from Mutual in Program Files (where nothing else can swap it out). Close Mutual and open it again to install it there.", "Mutual");
+            Prompt.Show(this, "SSH runs as admin, so it only runs from Mutual in Program Files (where nothing else can swap it out). Close Mutual and open it again to install it there.", "Mutual");
             return;
         }
         var args = "--ssh-session" + (answering ? " --no-ping" : "") + (AppSettings.Profile != null ? " --profile \"" + AppSettings.Profile + "\"" : "");
@@ -745,7 +916,7 @@ sealed class MainForm : Form
             log?.Write(ActivityResult.INFO, answering ? "Mutual: answering SSH request" : "Mutual: starting SSH");
         }
         catch (System.ComponentModel.Win32Exception) { log?.Write(ActivityResult.INFO, "Mutual: SSH cancelled at the admin prompt"); }
-        catch (Exception e) { MessageBox.Show(this, "Couldn't start SSH: " + e.Message, "Mutual"); }
+        catch (Exception e) { Prompt.Show(this, "Couldn't start SSH: " + e.Message, "Mutual"); }
     }
 
     // activity list
@@ -753,32 +924,18 @@ sealed class MainForm : Form
     void RefreshActivity()
     {
         if (log == null) return;
-        var rows = log.ReadRecent(60);
+        var rows = log.ReadRecent(80);
         rows.Reverse();
-        activity.BeginUpdate();
-        activity.Items.Clear();
-        foreach (var r in rows)
-        {
-            var local = r.Time.ToLocalTime();
-            string when = local.Date == DateTime.Today ? local.ToString("h:mm tt") : local.ToString("MMM d");
-            // mutuals own rows start with "Mutual: " for the old viewer, no point showing it here
-            var item = new ListViewItem(new[] { when, r.Action.StartsWith("Mutual: ") ? r.Action[8..] : r.Action })
-            {
-                ForeColor = r.Result switch { ActivityResult.FAILED => Theme.Bad, ActivityResult.OK => Theme.Online, _ => Theme.Text },
-            };
-            activity.Items.Add(item);
-        }
-        activity.EndUpdate();
+        activity.SetRows(rows);
     }
 
     // wipes the activity list and mutual.log on this pc (who you talked to and when)
     void ClearHistory()
     {
-        if (MessageBox.Show(this, "Clear the activity list and Mutual's log on this PC? This can't be undone.", "Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        if (Prompt.Show(this, "Clear the activity list and Mutual's log on this PC? This can't be undone.", "Mutual", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
         foreach (var f in new[] { log?.Path, log?.Path + ".previous", Diag.PathName, Diag.PathName + ".old" })
             try { if (f != null && File.Exists(f)) File.Delete(f); } catch { }
-        RefreshActivity();
-        activity.Items.Clear();
+        activity.SetRows(new());
     }
 
     // for tests, what this copy is doing rn as one json line
@@ -789,11 +946,48 @@ sealed class MainForm : Form
         watching = Watching != null, presented = Watching?.Presented ?? 0, viewerStats = sharing?.LastStats,
     });
 
+    // fake states for --snapshot-ui
+    public MainForm Demo(bool online = false, bool live = false, bool unpaired = false)
+    {
+        if (unpaired) { ignoreSaved = true; LoadPairing(); activity.SetRows(new()); return this; }
+        // readme pictures use made up names, never a real pairing
+        friendName.Text = avatar.Who = activity.PeerName = "alex";
+        Text = "Mutual";
+        pairInfo.Text = "25.14.88.203   ·   safety code 7D4F-9B98-8960";
+        var t = DateTime.UtcNow.Date.AddHours(DateTime.UtcNow.Hour);
+        activity.SetRows(new()
+        {
+            new(t.AddMinutes(-2), "", ActivityResult.OK, "Mutual: streamed to alex: 41m, 60 fps, ping 18 ms (worst 31), 0.1% loss, 14.2 mbit/s, udp"),
+            new(t.AddMinutes(-43), "", ActivityResult.INFO, "Mutual: video on udp"),
+            new(t.AddMinutes(-43), "", ActivityResult.OK, "Mutual: streaming window: RimWorld by Ludeon Studios to alex"),
+            new(t.AddMinutes(-44), "", ActivityResult.OK, "Mutual: received colony.rws from alex (checked)"),
+            new(t.AddMinutes(-50), "", ActivityResult.INFO, "Mutual: alex asked for a file: colony.rws (39.3 MB)"),
+            new(t.AddDays(-1).AddMinutes(-200), "", ActivityResult.OK, "Mutual: watched alex: 1h 12m, 59 fps, ping 21 ms (worst 40), 0.0% loss, udp"),
+            new(t.AddDays(-1).AddMinutes(-275), "", ActivityResult.FAILED, "Mutual: sending build.zip failed (alex cancelled)"),
+            new(t.AddDays(-1).AddMinutes(-300), "", ActivityResult.OK, "Mutual: paired with alex (safety code 7D4F-9B98-8960)"),
+        });
+        if (online) { this.online = true; checking = false; friendStatus.Text = "Online"; avatar.Ring = Theme.Online; }
+        if (live) { shareSource = "window: RimWorld by Ludeon Studios"; SetShare(ShareState.Live); }
+        return this;
+    }
+    bool ignoreSaved;
+
     public void ShowMe() { Show(); WindowState = FormWindowState.Normal; Activate(); }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (!quitting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); return; }
+        if (!quitting && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true; Hide();
+            // first time only, so closing the window doesnt look like it quit
+            if (!settings.TrayHintShown && !offline)
+            {
+                tray.ShowBalloonTip(5000, "Mutual is still running", "It stays in the tray so " + (pairing?.PeerName ?? "your friend") + " can reach you. Right click the tray icon to quit.", ToolTipIcon.None);
+                settings.TrayHintShown = true;
+                settings.Save();
+            }
+            return;
+        }
         StopSharing();
         StopServices();
         quit.Cancel();

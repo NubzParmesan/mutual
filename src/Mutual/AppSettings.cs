@@ -24,6 +24,8 @@ sealed class AppSettings
     // hash of the friends key last time, so a pairing that changes without you re-pairing gets noticed
     public string? PeerFingerprint { get; set; }
     public bool ShortcutsMade { get; set; }
+    // told you once that closing the window keeps it in the tray
+    public bool TrayHintShown { get; set; }
     // testing only, accepts everything without asking
     public bool AutoAccept { get => autoAccept && Profile != null; set => autoAccept = value; }
     bool autoAccept;

@@ -11,14 +11,17 @@ namespace Mutual;
 // scripts and OFF.cmd still works
 //   wait for them -> both send 1 -> start sshd -> both send 2 -> open ssh window -> 3 every second -> sshd off
 // a watchdog copy turns sshd back off if this one dies
-sealed class SshSession : Form
+sealed class SshSession : DarkForm
 {
     const string ControllerMutex = @"Global\MutualSSH-Controller";
     readonly Pairing p;
     readonly ActivityLog log;
     readonly bool ping;
-    readonly Label status = new() { Dock = DockStyle.Fill, ForeColor = Theme.Text, Font = Theme.Body, Padding = new Padding(16, 14, 16, 0) };
-    readonly Button stopButton;
+    readonly Label headline = new() { Dock = DockStyle.Top, Height = 26, Font = Theme.Heading, ForeColor = Theme.Text, UseMnemonic = false };
+    readonly Label status = new() { Dock = DockStyle.Top, Height = 40, Font = Theme.Small, ForeColor = Theme.Dim, UseMnemonic = false };
+    readonly Label icon = new() { Dock = DockStyle.Left, Width = 56, Font = Theme.Icons(18), ForeColor = Theme.Faint, Text = Theme.Glyph.Terminal, Padding = new Padding(0, 4, 0, 0) };
+    readonly Meter waiting = new() { Dock = DockStyle.Top };
+    readonly FlatButton stopButton;
     readonly CancellationTokenSource stop = new();
     string StatePath => Path.Combine(p.Folder, "active.json");
 
@@ -27,35 +30,51 @@ sealed class SshSession : Form
         p = pairing; ping = sendPing;
         log = new ActivityLog(Path.Combine(p.Folder, "activity.jsonl"));
         Text = "Mutual SSH with " + p.PeerName;
-        Icon = Program.AppIcon;
-        BackColor = Theme.Back; ForeColor = Theme.Text; Font = Theme.Body;
-        ClientSize = new Size(420, 150);
+        ClientSize = new Size(440, 184);
         FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        stopButton = Theme.Button("Disconnect", (_, _) => stop.Cancel(), primary: true);
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10), BackColor = Theme.Back };
-        stopButton.Width = 120;
-        bar.Controls.Add(stopButton);
-        Controls.Add(status);
-        Controls.Add(bar);
+        stopButton = new FlatButton { Text = "Cancel", Width = 120 };
+        stopButton.Click += (_, _) => stop.Cancel();
+        headline.Text = "Getting ready…";
+        var text = new Panel { Dock = DockStyle.Fill };
+        text.Controls.Add(waiting);
+        text.Controls.Add(status);
+        text.Controls.Add(headline);
+        var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(22, 18, 24, 12) };
+        body.Controls.Add(text);
+        body.Controls.Add(icon);
+        Controls.Add(body);
+        Controls.Add(ButtonBar(stopButton));
         Shown += async (_, _) => { await Run(); Close(); };
         FormClosing += (_, _) => stop.Cancel();
     }
 
-    void Say(string s) { if (!IsDisposed) BeginInvoke(() => status.Text = s); }
+    // on: sshd is running rn, so the window goes green and the button turns into the off switch
+    void Say(string head, string s, bool on = false)
+    {
+        if (IsDisposed) return;
+        BeginInvoke(() =>
+        {
+            headline.Text = head; status.Text = s;
+            waiting.Visible = !on;
+            icon.ForeColor = on ? Theme.Online : Theme.Faint;
+            stopButton.Text = on ? "Turn SSH off" : "Cancel";
+            stopButton.Kind = on ? ButtonKind.Danger : ButtonKind.Secondary;
+        });
+    }
 
     async Task Run()
     {
         if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
-        { MessageBox.Show(this, "SSH needs to run as administrator.", "Mutual"); return; }
+        { Prompt.Show(this, "SSH needs to run as administrator.", "Mutual"); return; }
         var sshClient = FindSshClient();
-        if (sshClient == null) { MessageBox.Show(this, "The OpenSSH client (ssh.exe) isn't installed. Add \"OpenSSH Client\" in Settings > Apps > Optional features. SSH was not switched on.", "Mutual"); return; }
-        if (!Sc("query sshd").ok) { MessageBox.Show(this, "OpenSSH Server isn't installed on this PC, so there's nothing for " + p.PeerName + " to connect to. Add \"OpenSSH Server\" in Settings > Apps > Optional features.", "Mutual"); return; }
+        if (sshClient == null) { Prompt.Show(this, "The OpenSSH client (ssh.exe) isn't installed. Add \"OpenSSH Client\" in Settings > Apps > Optional features. SSH was not switched on.", "Mutual"); return; }
+        if (!Sc("query sshd").ok) { Prompt.Show(this, "OpenSSH Server isn't installed on this PC, so there's nothing for " + p.PeerName + " to connect to. Add \"OpenSSH Server\" in Settings > Apps > Optional features.", "Mutual"); return; }
 
         using var mutex = new Mutex(false, ControllerMutex);
         bool locked;
         try { locked = mutex.WaitOne(0); } catch (AbandonedMutexException) { locked = true; }
-        if (!locked) { MessageBox.Show(this, "An SSH session is already running.", "Mutual"); return; }
+        if (!locked) { Prompt.Show(this, "An SSH session is already running.", "Mutual"); return; }
         System.Net.Security.SslStream? link = null;
         Process? shell = null, watchdog = null;
         string phase = "Waiting"; DateTime? readyAt = null;
@@ -66,7 +85,7 @@ sealed class SshSession : Form
             WriteState(me, null, "Waiting");
             watchdog = Process.Start(new ProcessStartInfo(Application.ExecutablePath, $"--ssh-watchdog \"{StatePath}\"") { UseShellExecute = false, CreateNoWindow = true });
             log.Write(ActivityResult.INFO, "Waiting for paired peer; SSH off");
-            Say("SSH is off. Waiting up to 10 minutes for " + p.PeerName + "...\r\nClose this window to cancel.");
+            Say("Waiting for " + p.PeerName + " to say yes", "SSH stays off until they do. This waits up to 10 minutes, close it to cancel.");
             // old notifier and mutual both know MSN1. it only asks, doesnt turn anything on
             if (ping) _ = Notify.SendAsync(p.PeerAddress, p.PeerPorts.Ping, p.Own, p.PeerCertRaw, new Request(RequestKind.Ssh, null), legacy: true);
 
@@ -83,7 +102,7 @@ sealed class SshSession : Form
             // -- so nothing after it can count as an ssh option
             shell = Process.Start(new ProcessStartInfo(sshClient) { UseShellExecute = false, ArgumentList = { "--", target } });
             WriteState(me, shell, "Ready");
-            Say("Both ready. SSH is on and a login window opened.\r\nDisconnect here (or close this window) to turn it off.");
+            Say("SSH is on", "You're both in and a login window opened. Turn it off here or close this window and it goes back off.", on: true);
             while (File.Exists(StatePath) && !stop.IsCancellationRequested)
             {
                 if (watchdog.HasExited) throw new InvalidOperationException("Watchdog stopped; closing SSH.");
@@ -111,11 +130,11 @@ sealed class SshSession : Form
                     : "Session ended: " + p.PeerName + " disconnected");
             else if (phase == "Ready" && timedOut) log.Write(ActivityResult.INFO, "Session ended: lost contact with " + p.PeerName + " (their PC went offline or the network dropped)");
             else if (e is TimeoutException) log.Write(ActivityResult.INFO, "No answer from " + p.PeerName + " within 10 minutes; SSH stayed off");
-            else { log.Write(ActivityResult.FAILED, "Controller error: " + e.Message); MessageBox.Show(this, "SSH stopped: " + e.Message, "Mutual"); }
+            else { log.Write(ActivityResult.FAILED, "Controller error: " + e.Message); Prompt.Show(this, "SSH stopped: " + e.Message, "Mutual"); }
         }
         finally
         {
-            try { StopManagedSsh(); } catch (Exception e) { MessageBox.Show(this, "Couldn't confirm SSH is off: " + e.Message, "Mutual"); }
+            try { StopManagedSsh(); } catch (Exception e) { Prompt.Show(this, "Couldn't confirm SSH is off: " + e.Message, "Mutual"); }
             try { if (shell is { HasExited: false }) shell.Kill(); } catch { }
             try { File.Delete(StatePath); } catch { }
             link?.Dispose();
