@@ -26,18 +26,44 @@ static class Theme
     public static readonly Color BadSoft = Color.FromArgb(61, 30, 30);
     public static readonly Color WarnSoft = Color.FromArgb(56, 46, 22);
 
-    public static readonly Font Hero = new("Segoe UI Semibold", 16f);
-    public static readonly Font Title = new("Segoe UI Semibold", 13f);
-    public static readonly Font Heading = new("Segoe UI Semibold", 10f);
-    public static readonly Font Body = new("Segoe UI", 9.5f);
-    public static readonly Font Small = new("Segoe UI", 8.5f);
-    public static readonly Font SmallBold = new("Segoe UI Semibold", 8.5f);
-    public static readonly Font Mono = new("Consolas", 8.5f);
+    // MUTUAL_UI_SCALE=1.5 makes a 100% screen act like a 150% one, for checking layouts without changing windows settings
+    public static readonly float FakeScale = float.TryParse(Environment.GetEnvironmentVariable("MUTUAL_UI_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) && f is >= 1 and <= 3 ? f : 1;
+
+    public static readonly Font Hero = new("Segoe UI Semibold", 16f * FakeScale);
+    public static readonly Font Title = new("Segoe UI Semibold", 13f * FakeScale);
+    public static readonly Font Heading = new("Segoe UI Semibold", 10f * FakeScale);
+    public static readonly Font Body = new("Segoe UI", 9.5f * FakeScale);
+    public static readonly Font Small = new("Segoe UI", 8.5f * FakeScale);
+    public static readonly Font SmallBold = new("Segoe UI Semibold", 8.5f * FakeScale);
+    public static readonly Font Mono = new("Consolas", 8.5f * FakeScale);
+
+    // fonts already grow with the screens scaling (125%, 150%) but sizes in pixels dont, so everything
+    // laid out by hand gets multiplied by this
+    public static float K(Control c) => c.DeviceDpi / 96f * FakeScale;
+    public static float SystemK => DpiOf() / 96f * FakeScale;
+    static int DpiOf() { using var g = Graphics.FromHwnd(0); return (int)g.DpiX; }
+
+    // a size in 100% pixels to real pixels for this control
+    public static int S(this Control c, float px) => (int)Math.Round(px * K(c));
+
+    // text height in 100% pixels, for laying things out before the form is scaled
+    public static int MeasureHeight(string text, Font font, int width) =>
+        (int)Math.Ceiling(TextRenderer.MeasureText(text, font, new Size((int)(width * SystemK), 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height / SystemK);
+
+    public static int MeasureWidth(string text, Font font) => (int)Math.Ceiling(TextRenderer.MeasureText(text, font).Width / SystemK);
+
+    // grows a hand laid out window and everything in it to the screens scaling, once, before it shows
+    public static void ScaleUp(Form f)
+    {
+        float k = K(f);
+        if (Math.Abs(k - 1) < .01f) return;
+        f.Scale(new SizeF(k, k));
+    }
 
     // win11 has segoe fluent icons, win10 has mdl2. same code points for everything used here
     public static readonly string IconFamily = new System.Drawing.Text.InstalledFontCollection().Families.Any(f => f.Name == "Segoe Fluent Icons") ? "Segoe Fluent Icons" : "Segoe MDL2 Assets";
     static readonly Dictionary<float, Font> iconFonts = new();
-    public static Font Icons(float size) { if (!iconFonts.TryGetValue(size, out var f)) iconFonts[size] = f = new Font(IconFamily, size); return f; }
+    public static Font Icons(float size) { if (!iconFonts.TryGetValue(size, out var f)) iconFonts[size] = f = new Font(IconFamily, size * FakeScale); return f; }
 
     public static class Glyph
     {
@@ -175,6 +201,10 @@ class DarkForm : Form
         AutoScaleMode = AutoScaleMode.None;
     }
 
+    // 1 until the window has been grown to the screens scaling, then that factor
+    // so anything placed by hand after that has to be multiplied by it
+    public float ScaledBy { get; private set; } = 1;
+
     protected void Dialog()
     {
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
@@ -186,6 +216,19 @@ class DarkForm : Form
     {
         base.OnHandleCreated(e);
         Theme.DarkTitle(Handle);
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        float k = Theme.K(this);
+        if (Math.Abs(k - 1) >= .01f)
+        {
+            Theme.ScaleUp(this);
+            ScaledBy = k;
+            if (StartPosition == FormStartPosition.CenterParent && Owner != null) CenterToParent();
+            else if (StartPosition is FormStartPosition.CenterScreen or FormStartPosition.CenterParent) CenterToScreen();
+        }
+        base.OnLoad(e);
     }
 
     // the bottom strip with the buttons, right to left so the main one ends up on the right
@@ -258,10 +301,10 @@ class FlatButton : Button
     protected virtual void DrawContent(Graphics g, Color text)
     {
         var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine;
-        if (Glyph == null) { TextRenderer.DrawText(g, Text, Font, new Rectangle(6, 0, Width - 12, Height), text, flags | TextFormatFlags.HorizontalCenter); return; }
+        if (Glyph == null) { TextRenderer.DrawText(g, Text, Font, new Rectangle(this.S(6), 0, Width - this.S(12), Height), text, flags | TextFormatFlags.HorizontalCenter); return; }
         // glyph + text centered together
         int tw = string.IsNullOrEmpty(Text) ? 0 : TextRenderer.MeasureText(g, Text, Font, Size.Empty, TextFormatFlags.NoPadding).Width;
-        int gw = 16, gap = tw > 0 ? 8 : 0, total = gw + gap + tw, x = Math.Max(6, (Width - total) / 2);
+        int gw = this.S(16), gap = tw > 0 ? this.S(8) : 0, total = gw + gap + tw, x = Math.Max(this.S(6), (Width - total) / 2);
         Theme.DrawGlyph(g, Glyph, 10.5f, text, new Rectangle(x, 0, gw, Height));
         if (tw > 0) TextRenderer.DrawText(g, Text, Font, new Rectangle(x + gw + gap, 0, Width - x - gw - gap - 4, Height), text, flags | TextFormatFlags.NoPadding);
     }
@@ -291,14 +334,15 @@ sealed class Tile : FlatButton
         // icon in a soft circle
         var accent = GlyphColor ?? (Kind == ButtonKind.Primary ? Theme.Accent : Theme.Dim);
         if (!Enabled) accent = Theme.Faint;
-        var circle = new Rectangle(14, (Height - 40) / 2, 40, 40);
-        Theme.FillRound(g, Kind == ButtonKind.Primary && Enabled ? Theme.AccentSoft : Theme.Raised, circle, 20);
+        int d = this.S(40);
+        var circle = new Rectangle(this.S(14), (Height - d) / 2, d, d);
+        Theme.FillRound(g, Kind == ButtonKind.Primary && Enabled ? Theme.AccentSoft : Theme.Raised, circle, d / 2f);
         Theme.DrawGlyph(g, Glyph ?? "", 14, accent, circle);
 
-        int x = circle.Right + 12, w = Width - x - 10;
+        int x = circle.Right + this.S(12), w = Width - x - this.S(10);
         var flags = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
-        TextRenderer.DrawText(g, Text, Theme.Heading, new Rectangle(x, Height / 2 - 19, w, 20), Enabled ? Theme.Text : Theme.Faint, flags);
-        TextRenderer.DrawText(g, Subtitle, Theme.Small, new Rectangle(x, Height / 2 + 2, w, 34), Enabled ? Theme.Dim : Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, Text, Theme.Heading, new Rectangle(x, Height / 2 - this.S(19), w, this.S(20)), Enabled ? Theme.Text : Theme.Faint, flags);
+        TextRenderer.DrawText(g, Subtitle, Theme.Small, new Rectangle(x, Height / 2 + this.S(2), w, this.S(34)), Enabled ? Theme.Dim : Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 }
 
@@ -325,18 +369,19 @@ sealed class Switch : CheckBox
         var g = e.Graphics;
         g.Clear(Parent?.BackColor ?? Theme.Back);
         // the switch itself on the right
-        var track = new RectangleF(Width - 44, 4, 40, 20);
+        float k = Theme.K(this);
+        var track = new RectangleF(Width - 44 * k, 4 * k, 40 * k, 20 * k);
         var on = Checked;
-        Theme.FillRound(g, !Enabled ? Theme.Raised : on ? (hover ? Theme.AccentHover : Theme.Accent) : (hover ? Theme.Line : Theme.Raised), track, 10);
-        if (!on) Theme.DrawRound(g, Theme.Faint, track, 10);
-        var knob = new RectangleF(on ? track.Right - 17 : track.X + 3, track.Y + 3, 14, 14);
-        Theme.FillRound(g, on ? Color.FromArgb(24, 16, 6) : Theme.Dim, knob, 7);
-        if (Focused && ShowFocusCues) Theme.DrawRound(g, Theme.Accent, new RectangleF(track.X - 2, track.Y - 2, track.Width + 4, track.Height + 4), 12);
+        Theme.FillRound(g, !Enabled ? Theme.Raised : on ? (hover ? Theme.AccentHover : Theme.Accent) : (hover ? Theme.Line : Theme.Raised), track, 10 * k);
+        if (!on) Theme.DrawRound(g, Theme.Faint, track, 10 * k);
+        var knob = new RectangleF(on ? track.Right - 17 * k : track.X + 3 * k, track.Y + 3 * k, 14 * k, 14 * k);
+        Theme.FillRound(g, on ? Color.FromArgb(24, 16, 6) : Theme.Dim, knob, 7 * k);
+        if (Focused && ShowFocusCues) Theme.DrawRound(g, Theme.Accent, RectangleF.Inflate(track, 2 * k, 2 * k), 12 * k);
 
-        int w = Width - 60;
-        TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(0, 4, w, 20), Enabled ? Theme.Text : Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
+        int w = Width - this.S(60);
+        TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(0, this.S(4), w, this.S(20)), Enabled ? Theme.Text : Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
         if (Description.Length > 0)
-            TextRenderer.DrawText(g, Description, Theme.Small, new Rectangle(0, 26, w, Height - 26), Theme.Dim, TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, Description, Theme.Small, new Rectangle(0, this.S(26), w, Height - this.S(26)), Theme.Dim, TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
     }
 }
 
@@ -530,7 +575,7 @@ sealed class Banner : Card
     public FlatButton AddButton(string label, Action click, ButtonKind kind = ButtonKind.Primary)
     {
         var b = new FlatButton { Text = label, Kind = kind, Height = 34, Margin = new Padding(6, 0, 0, 0) };
-        b.Width = Math.Max(78, TextRenderer.MeasureText(label, b.Font).Width + 26);
+        b.Width = Math.Max(78, Theme.MeasureWidth(label, b.Font) + 26);
         b.Click += (_, _) => click();
         buttons.Controls.Add(b);
         return b;
@@ -553,15 +598,15 @@ sealed class StepList : Control
     {
         var g = e.Graphics;
         g.Clear(Parent?.BackColor ?? Theme.Panel);
-        int row = Math.Max(24, Height / Math.Max(1, steps.Length));
+        int row = Math.Max(this.S(24), Height / Math.Max(1, steps.Length)), d = this.S(22);
         for (int i = 0; i < steps.Length; i++)
         {
-            var circle = new Rectangle(0, i * row + (row - 22) / 2, 22, 22);
+            var circle = new Rectangle(0, i * row + (row - d) / 2, d, d);
             bool done = i < Done;
-            Theme.FillRound(g, done ? Theme.Online : Theme.AccentSoft, circle, 11);
+            Theme.FillRound(g, done ? Theme.Online : Theme.AccentSoft, circle, d / 2f);
             if (done) Theme.DrawGlyph(g, Theme.Glyph.Check, 8, Theme.Back, circle);
             else TextRenderer.DrawText(g, (i + 1).ToString(), Theme.SmallBold, circle, Theme.Accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, steps[i], Theme.Small, new Rectangle(32, i * row, Width - 32, row), done ? Theme.Dim : Theme.Text,
+            TextRenderer.DrawText(g, steps[i], Theme.Small, new Rectangle(this.S(32), i * row, Width - this.S(32), row), done ? Theme.Dim : Theme.Text,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         }
     }

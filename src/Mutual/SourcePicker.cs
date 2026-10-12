@@ -69,7 +69,7 @@ sealed class SourcePicker : DarkForm
         Controls.Add(body);
         Controls.Add(bar);
 
-        list.MeasureItem += (_, e) => e.ItemHeight = list.Items[e.Index] is Heading ? (e.Index == 0 ? 28 : 38) : 48;
+        list.MeasureItem += (_, e) => e.ItemHeight = list.S(list.Items[e.Index] is Heading ? (e.Index == 0 ? 28 : 38) : 48);
         list.DrawItem += DrawItem;
         list.DoubleClick += (_, _) => { if (list.SelectedItem is Choice) Pick(); };
         list.SelectedIndexChanged += (_, _) => { if (list.SelectedItem is Heading) Step(1); go.Enabled = list.SelectedItem is Choice; };
@@ -113,24 +113,26 @@ sealed class SourcePicker : DarkForm
         using (var back = new SolidBrush(Theme.Panel)) g.FillRectangle(back, b);
         if (list.Items[e.Index] is Heading h)
         {
-            TextRenderer.DrawText(g, h.Text, Theme.SmallBold, new Rectangle(b.X + 16, b.Bottom - 22, b.Width - 32, 18), Theme.Faint, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, h.Text, Theme.SmallBold, new Rectangle(b.X + list.S(16), b.Bottom - list.S(22), b.Width - list.S(32), list.S(18)), Theme.Faint, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
             return;
         }
         var c = (Choice)list.Items[e.Index];
         bool selected = (e.State & DrawItemState.Selected) != 0;
-        var row = new RectangleF(b.X + 6, b.Y + 2, b.Width - 13, b.Height - 4);
-        if (selected) { Theme.FillRound(g, Theme.AccentSoft, row, 8); Theme.DrawRound(g, Theme.Mix(Theme.AccentSoft, Theme.Accent, .5f), row, 8); }
-        else if (e.Index == hover) Theme.FillRound(g, Theme.Raised, row, 8);
-        var iconBox = new Rectangle(b.X + 16, b.Y + (b.Height - 30) / 2, 30, 30);
-        if (c.AppIcon != null) g.DrawIcon(c.AppIcon, new Rectangle(iconBox.X + 3, iconBox.Y + 3, 24, 24));
+        float k = Theme.K(list);
+        var row = new RectangleF(b.X + 6 * k, b.Y + 2 * k, b.Width - 13 * k, b.Height - 4 * k);
+        if (selected) { Theme.FillRound(g, Theme.AccentSoft, row, 8 * k); Theme.DrawRound(g, Theme.Mix(Theme.AccentSoft, Theme.Accent, .5f), row, 8 * k); }
+        else if (e.Index == hover) Theme.FillRound(g, Theme.Raised, row, 8 * k);
+        int box = list.S(30);
+        var iconBox = new Rectangle(b.X + list.S(16), b.Y + (b.Height - box) / 2, box, box);
+        if (c.AppIcon != null) g.DrawIcon(c.AppIcon, Rectangle.Inflate(iconBox, -list.S(3), -list.S(3)));
         else
         {
-            Theme.FillRound(g, selected ? Theme.Mix(Theme.AccentSoft, Theme.Accent, .25f) : Theme.Raised, iconBox, 7);
+            Theme.FillRound(g, selected ? Theme.Mix(Theme.AccentSoft, Theme.Accent, .25f) : Theme.Raised, iconBox, 7 * k);
             Theme.DrawGlyph(g, c.Glyph, 11, selected ? Theme.Accent : Theme.Dim, iconBox);
         }
-        int x = iconBox.Right + 12, w = b.Right - x - 14;
-        TextRenderer.DrawText(g, c.Title, Theme.Body, new Rectangle(x, b.Y + 6, w, 20), Theme.Text, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(g, c.Sub, Theme.Small, new Rectangle(x, b.Y + 26, w, 18), Theme.Dim, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        int x = iconBox.Right + list.S(12), w = b.Right - x - list.S(14);
+        TextRenderer.DrawText(g, c.Title, Theme.Body, new Rectangle(x, b.Y + list.S(6), w, list.S(20)), Theme.Text, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, c.Sub, Theme.Small, new Rectangle(x, b.Y + list.S(26), w, list.S(18)), Theme.Dim, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
     }
 
     // the program behind a window, for the second line and its icon

@@ -101,7 +101,8 @@ sealed class MainForm : DarkForm
             // status dot in front of the status text
             if (pairing == null) return;
             var c = checking ? Theme.Faint : online ? Theme.Online : Theme.Offline;
-            Theme.FillRound(e.Graphics, c, new RectangleF(88, 57, 9, 9), 4.5f);
+            float k = Theme.K(header);
+            Theme.FillRound(e.Graphics, c, new RectangleF(88 * k, 57 * k, 9 * k, 9 * k), 4.5f * k);
         };
 
         // things that need you, only one or two show at a time
@@ -261,7 +262,7 @@ sealed class MainForm : DarkForm
         }
         avatar.Who = activity.PeerName = pairing?.PeerName ?? "";
         // no dot to sit behind when theres nobody
-        friendStatus.Left = pairing == null ? 86 : 102;
+        friendStatus.Left = (int)((pairing == null ? 86 : 102) * ScaledBy);
         avatar.Ring = Theme.Line;
         avatar.Invalidate();
         header.Invalidate();

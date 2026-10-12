@@ -41,7 +41,7 @@ sealed class RequestPopup : Form
         const int width = 380, textX = 70, textW = width - textX - 18;
         var avatar = new Avatar { Who = friend, Ring = Theme.Accent, Size = new Size(40, 40), Location = new Point(18, 18) };
         var badge = new Label { Text = glyph, Font = Theme.Icons(9), ForeColor = Theme.Back, BackColor = Theme.Accent, Size = new Size(20, 20), Location = new Point(42, 42), TextAlign = ContentAlignment.MiddleCenter };
-        badge.Paint += (_, e) => { e.Graphics.Clear(Theme.Panel); Theme.FillRound(e.Graphics, Theme.Accent, new RectangleF(0, 0, 19, 19), 10); Theme.DrawGlyph(e.Graphics, glyph, 8, Theme.Back, new Rectangle(0, 0, 20, 20)); };
+        badge.Paint += (_, e) => { e.Graphics.Clear(Theme.Panel); Theme.FillRound(e.Graphics, Theme.Accent, new RectangleF(0, 0, badge.Width - 1, badge.Height - 1), badge.Width / 2f); Theme.DrawGlyph(e.Graphics, glyph, 8, Theme.Back, badge.ClientRectangle); };
         Controls.Add(badge);
         Controls.Add(avatar);
 
@@ -52,7 +52,7 @@ sealed class RequestPopup : Form
         y += 24;
         if (detail != null)
         {
-            int h = Math.Min(54, TextRenderer.MeasureText(detail, Theme.Small, new Size(textW, 0), TextFormatFlags.WordBreak).Height);
+            int h = Math.Min(54, Theme.MeasureHeight(detail, Theme.Small, textW));
             Controls.Add(new Label { Text = detail, Font = Theme.Small, ForeColor = Theme.Dim, UseMnemonic = false, AutoEllipsis = true, Bounds = new Rectangle(textX, y, textW, h + 2) });
             y += h + 4;
         }
@@ -73,8 +73,10 @@ sealed class RequestPopup : Form
         Controls.Add(yes); Controls.Add(no);
         Size = new Size(width, y + 32 + 16);
 
+        // grow to the screens scaling now so the corner spot is worked out from the real size
+        Theme.ScaleUp(this);
         var area = Screen.PrimaryScreen!.WorkingArea;
-        Location = new Point(area.Right - Width - 16, area.Bottom - Height - 16);
+        Location = new Point(area.Right - Width - this.S(16), area.Bottom - Height - this.S(16));
         // their side stops waiting after 10 min so this goes away too
         var expire = new System.Windows.Forms.Timer { Interval = 600_000 };
         expire.Tick += (_, _) => Close();
@@ -88,7 +90,7 @@ sealed class RequestPopup : Form
             step++;
             float t = Math.Min(1, step / 14f), ease = 1 - (1 - t) * (1 - t);
             Opacity = ease;
-            Top = finalY + (int)((1 - ease) * 18);
+            Top = finalY + (int)((1 - ease) * this.S(18));
             if (t >= 1) fade.Stop();
         };
         Shown += (_, _) => fade.Start();
@@ -102,6 +104,6 @@ sealed class RequestPopup : Form
         using var pen = new Pen(Theme.Line);
         e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
         using var stripe = new SolidBrush(Theme.Accent);
-        e.Graphics.FillRectangle(stripe, 0, 0, 3, Height);
+        e.Graphics.FillRectangle(stripe, 0, 0, this.S(3), Height);
     }
 }

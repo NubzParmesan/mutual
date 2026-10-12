@@ -24,15 +24,15 @@ sealed class Prompt : DarkForm
         const int width = 440, textX = 76, textW = width - textX - 24;
         int y = 24;
         var badge = new Label { Text = glyph, Font = Theme.Icons(16), ForeColor = tint, BackColor = fill, TextAlign = ContentAlignment.MiddleCenter, Bounds = new Rectangle(24, 24, 36, 36), UseMnemonic = false };
-        badge.Paint += (_, e) => { e.Graphics.Clear(Theme.Back); Theme.FillRound(e.Graphics, fill, new RectangleF(0, 0, 35, 35), 18); Theme.DrawGlyph(e.Graphics, glyph, 14, tint, new Rectangle(0, 0, 36, 36)); };
+        badge.Paint += (_, e) => { e.Graphics.Clear(Theme.Back); Theme.FillRound(e.Graphics, fill, new RectangleF(0, 0, badge.Width - 1, badge.Height - 1), badge.Width / 2f); Theme.DrawGlyph(e.Graphics, glyph, 14, tint, badge.ClientRectangle); };
         Controls.Add(badge);
         if (head != null)
         {
-            int h = TextRenderer.MeasureText(head, Theme.Heading, new Size(textW, 0), TextFormatFlags.WordBreak).Height;
+            int h = Theme.MeasureHeight(head, Theme.Heading, textW);
             Controls.Add(new Label { Text = head, Font = Theme.Heading, ForeColor = Theme.Text, Bounds = new Rectangle(textX, y + 2, textW, h + 4), UseMnemonic = false });
             y += h + 12;
         }
-        int bh = TextRenderer.MeasureText(body, Theme.Body, new Size(textW, 0), TextFormatFlags.WordBreak).Height;
+        int bh = Theme.MeasureHeight(body, Theme.Body, textW);
         Controls.Add(new Label { Text = body, Font = Theme.Body, ForeColor = head == null ? Theme.Text : Theme.Dim, Bounds = new Rectangle(textX, y + (head == null ? 6 : 0), textW, bh + 6), UseMnemonic = false });
         y = Math.Max(y + bh + 30, 84);
 

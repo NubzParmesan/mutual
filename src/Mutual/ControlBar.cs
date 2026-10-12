@@ -16,6 +16,7 @@ sealed class ControlBar : Form
     StreamHost? host;
     string? hotkey;
     bool controlling;
+    float scaled = 1;
     public event Action? StopClicked;
 
     public ControlBar(string friend, bool wholeScreen)
@@ -29,8 +30,6 @@ sealed class ControlBar : Form
         DoubleBuffered = true;
         Size = new Size(600, 44);
         Padding = new Padding(6);
-        var area = Screen.PrimaryScreen!.WorkingArea;
-        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + 8);
         toggle = new FlatButton { Text = "Let them control", Glyph = Theme.Glyph.Mouse, Kind = ButtonKind.Primary, Width = 156, Dock = DockStyle.Right };
         toggle.Click += (_, _) => Toggle();
         stop = new FlatButton { Text = "Stop sharing", Glyph = Theme.Glyph.Stop, Width = 120, Dock = DockStyle.Right };
@@ -46,9 +45,15 @@ sealed class ControlBar : Form
         {
             // live dot
             var c = controlling ? Theme.Warn : host == null ? Theme.Faint : Theme.Bad;
-            Theme.FillRound(e.Graphics, c, new RectangleF(12, text.Height / 2f - 5, 10, 10), 5);
+            float k = Theme.K(text);
+            Theme.FillRound(e.Graphics, c, new RectangleF(12 * k, text.Height / 2f - 5 * k, 10 * k, 10 * k), 5 * k);
         };
         Refresh(false);
+        Theme.ScaleUp(this);
+        scaled = Theme.K(this);
+        text.Padding = new Padding(this.S(30), 0, this.S(8), 0);
+        var area = Screen.PrimaryScreen!.WorkingArea;
+        Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + this.S(8));
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -95,7 +100,7 @@ sealed class ControlBar : Form
         BackColor = on ? Color.FromArgb(74, 48, 18) : Theme.Panel;
         toggle.Text = on ? "Take back control" : "Let them control";
         toggle.Kind = on ? ButtonKind.Secondary : ButtonKind.Primary;
-        toggle.Width = on ? 168 : 156;
+        toggle.Width = (int)((on ? 168 : 156) * scaled);
         toggle.Enabled = host != null;
         Invalidate(true);
     }

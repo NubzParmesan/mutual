@@ -11,7 +11,8 @@ sealed class ActivityList : Panel
     List<ActivityRow> rows = new();
     string signature = "";
     int hover = -1;
-    const int TextX = 44, TimeW = 70;
+    int TextX => this.S(44);
+    int TimeW => this.S(70);
 
     record Header(string Text);
 
@@ -90,11 +91,11 @@ sealed class ActivityList : Panel
 
     void Measure(object? sender, MeasureItemEventArgs e)
     {
-        if (list.Items[e.Index] is Header) { e.ItemHeight = e.Index == 0 ? 26 : 34; return; }
+        if (list.Items[e.Index] is Header) { e.ItemHeight = this.S(e.Index == 0 ? 26 : 34); return; }
         var r = (ActivityRow)list.Items[e.Index];
-        int w = Math.Max(80, list.ClientSize.Width - TextX - TimeW);
+        int w = Math.Max(this.S(80), list.ClientSize.Width - TextX - TimeW);
         int h = TextRenderer.MeasureText(Clean(r.Action), Theme.Body, new Size(w, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
-        e.ItemHeight = Math.Min(255, Math.Max(32, Math.Min(h, 3 * Theme.Body.Height) + 14));
+        e.ItemHeight = Math.Min(255, Math.Max(this.S(32), Math.Min(h, 3 * Theme.Body.Height) + this.S(14)));
     }
 
     void Draw(object? sender, DrawItemEventArgs e)
@@ -105,17 +106,17 @@ sealed class ActivityList : Panel
         using (var back = new SolidBrush(Theme.Panel)) g.FillRectangle(back, b);
         if (list.Items[e.Index] is Header h)
         {
-            TextRenderer.DrawText(g, h.Text, Theme.SmallBold, new Rectangle(b.X + 16, b.Bottom - 22, b.Width - 32, 18), Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, h.Text, Theme.SmallBold, new Rectangle(b.X + this.S(16), b.Bottom - this.S(22), b.Width - this.S(32), this.S(18)), Theme.Faint, TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
             return;
         }
         var r = (ActivityRow)list.Items[e.Index];
-        if (e.Index == hover) Theme.FillRound(g, Theme.Raised, new RectangleF(b.X + 6, b.Y + 1, b.Width - 13, b.Height - 2), 6);
+        if (e.Index == hover) Theme.FillRound(g, Theme.Raised, new RectangleF(b.X + this.S(6), b.Y + 1, b.Width - this.S(13), b.Height - 2), this.S(6));
         var tint = r.Result switch { ActivityResult.OK => Theme.Online, ActivityResult.FAILED => Theme.Bad, _ => Theme.Dim };
-        Theme.DrawGlyph(g, IconFor(r), 10.5f, tint, new Rectangle(b.X + 14, b.Y + 6, 20, 20));
+        Theme.DrawGlyph(g, IconFor(r), 10.5f, tint, new Rectangle(b.X + this.S(14), b.Y + this.S(6), this.S(20), this.S(20)));
         var textColor = r.Result == ActivityResult.FAILED ? Theme.Mix(Theme.Bad, Theme.Text, .35f) : Theme.Text;
-        TextRenderer.DrawText(g, Clean(r.Action), Theme.Body, new Rectangle(b.X + TextX, b.Y + 7, b.Width - TextX - TimeW, b.Height - 10), textColor,
+        TextRenderer.DrawText(g, Clean(r.Action), Theme.Body, new Rectangle(b.X + TextX, b.Y + this.S(7), b.Width - TextX - TimeW, b.Height - this.S(10)), textColor,
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-        TextRenderer.DrawText(g, r.Time.ToLocalTime().ToString("h:mm tt"), Theme.Small, new Rectangle(b.Right - TimeW, b.Y + 9, TimeW - 14, 18), Theme.Faint,
+        TextRenderer.DrawText(g, r.Time.ToLocalTime().ToString("h:mm tt"), Theme.Small, new Rectangle(b.Right - TimeW, b.Y + this.S(9), TimeW - this.S(14), this.S(18)), Theme.Faint,
             TextFormatFlags.Right | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
     }
 }

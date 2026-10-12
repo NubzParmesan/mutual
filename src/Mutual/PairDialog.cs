@@ -126,7 +126,7 @@ sealed class PairDialog : DarkForm
         int noteH = 0;
         if (note != null)
         {
-            noteH = TextRenderer.MeasureText(note, Theme.Small, new Size(420, 0), TextFormatFlags.WordBreak).Height + 8;
+            noteH = Theme.MeasureHeight(note, Theme.Small, 420) + 8;
             card.Controls.Add(new Label { Text = note, Dock = DockStyle.Top, Height = noteH, Font = Theme.Small, ForeColor = Theme.Dim, Padding = new Padding(34, 0, 0, 6) });
         }
         var top = new Panel { Dock = DockStyle.Top, Height = 28 };
@@ -195,11 +195,11 @@ sealed class StepBadge : Control
     {
         var g = e.Graphics;
         g.Clear(Parent?.BackColor ?? Theme.Panel);
-        var r = new Rectangle(0, 0, 23, 23);
+        var r = new Rectangle(0, 0, Width - 1, Height - 1);
         bool live = Live;
-        Theme.FillRound(g, Done ? Theme.Online : live ? Theme.AccentSoft : Theme.Raised, r, 12);
-        if (Done) Theme.DrawGlyph(g, Theme.Glyph.Check, 9, Theme.Back, new Rectangle(0, 0, 24, 24));
-        else TextRenderer.DrawText(g, n.ToString(), Theme.SmallBold, new Rectangle(0, 0, 24, 24), live ? Theme.Accent : Theme.Faint, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        Theme.FillRound(g, Done ? Theme.Online : live ? Theme.AccentSoft : Theme.Raised, r, Width / 2f);
+        if (Done) Theme.DrawGlyph(g, Theme.Glyph.Check, 9, Theme.Back, ClientRectangle);
+        else TextRenderer.DrawText(g, n.ToString(), Theme.SmallBold, ClientRectangle, live ? Theme.Accent : Theme.Faint, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
 }
 

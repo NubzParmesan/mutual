@@ -50,7 +50,7 @@ sealed class SettingsDialog : DarkForm
     {
         var card = new Card { Dock = DockStyle.Top, Padding = new Padding(16, 12, 16, 12) };
         foreach (var c in topDown.Reverse()) { c.Dock = DockStyle.Top; card.Controls.Add(c); }
-        foreach (var c in topDown.OfType<Switch>()) c.Height = string.IsNullOrEmpty(c.Description) ? 28 : 28 + TextRenderer.MeasureText(c.Description, Theme.Small, new Size(336, 0), TextFormatFlags.WordBreak).Height + 6;
+        foreach (var c in topDown.OfType<Switch>()) c.Height = string.IsNullOrEmpty(c.Description) ? 28 : 28 + Theme.MeasureHeight(c.Description, Theme.Small, 336) + 6;
         card.Height = card.Padding.Vertical + topDown.Sum(c => c.Height);
         body.Controls.Add(Gap(6));
         body.Controls.Add(card);
