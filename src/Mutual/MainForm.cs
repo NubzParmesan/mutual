@@ -414,11 +414,16 @@ sealed class MainForm : DarkForm
     {
         while (!ct.IsCancellationRequested && pairing != null)
         {
-            bool up = await Presence.IsOnlineAsync(pairing.PeerAddress, pairing.PeerPorts.Ping) || rendezvous?.PeerOnline == true;
+            // a tcp connect is one round trip, close enough to a ping to say how good the link is
+            var clock = Stopwatch.StartNew();
+            bool direct = await Presence.IsOnlineAsync(pairing.PeerAddress, pairing.PeerPorts.Ping);
+            long ms = clock.ElapsedMilliseconds;
+            bool up = direct || rendezvous?.PeerOnline == true;
+            friendStatus.Text = !up ? "Offline" : !direct ? "Online, thru the relay" : "Online  ·  " + Math.Max(1, ms) + " ms";
+            friendStatus.ForeColor = up && direct && ms > 150 ? Theme.Warn : Theme.Dim;
             if (up != online || checking)
             {
                 online = up; checking = false;
-                friendStatus.Text = up ? "Online" : "Offline";
                 trayStatus.Text = pairing.PeerName + ": " + (up ? "online" : "offline");
                 tray.Icon = Program.TrayIcon(up);
                 tray.Text = "Mutual · " + pairing.PeerName + " " + (up ? "online" : "offline");
@@ -967,7 +972,7 @@ sealed class MainForm : DarkForm
             new(t.AddDays(-1).AddMinutes(-275), "", ActivityResult.FAILED, "Mutual: sending build.zip failed (alex cancelled)"),
             new(t.AddDays(-1).AddMinutes(-300), "", ActivityResult.OK, "Mutual: paired with alex (safety code 7D4F-9B98-8960)"),
         });
-        if (online) { this.online = true; checking = false; friendStatus.Text = "Online"; avatar.Ring = Theme.Online; }
+        if (online) { this.online = true; checking = false; friendStatus.Text = "Online  ·  18 ms"; avatar.Ring = Theme.Online; }
         if (live) { shareSource = "window: RimWorld by Ludeon Studios"; SetShare(ShareState.Live); }
         return this;
     }

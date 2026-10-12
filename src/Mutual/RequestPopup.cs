@@ -64,10 +64,14 @@ sealed class RequestPopup : Form
         }
         y = Math.Max(y + 10, 70);
 
-        var shownAt = DateTime.UtcNow;
+        shownAt = DateTime.UtcNow;
+        this.accept = accept;
+        // you might be fullscreen in a game and this never takes focus, so theres a key for it too
+        hint = new Label { Text = "Ctrl+Alt+Y accepts", Font = Theme.Small, ForeColor = Theme.Faint, Bounds = new Rectangle(textX, y + 8, 110, 18) };
+        Controls.Add(hint);
         var yes = new FlatButton { Text = "Accept", Glyph = Theme.Glyph.Check, Kind = ButtonKind.Primary, Bounds = new Rectangle(width - 18 - 100 - 8 - 86, y, 100, 32) };
         // a click in the first second is prolly someone mid game, not a real yes
-        yes.Click += (_, _) => { if ((DateTime.UtcNow - shownAt).TotalMilliseconds < 1000) return; Close(); accept(); };
+        yes.Click += (_, _) => Accept();
         var no = new FlatButton { Text = "Ignore", Bounds = new Rectangle(width - 18 - 86, y, 86, 32) };
         no.Click += (_, _) => Close();
         Controls.Add(yes); Controls.Add(no);
@@ -97,6 +101,42 @@ sealed class RequestPopup : Form
         FormClosed += (_, _) => { fade.Dispose(); expire.Dispose(); };
         System.Media.SystemSounds.Asterisk.Play();
     }
+
+    readonly Action accept;
+    readonly Label hint;
+    DateTime shownAt;
+    bool hotkey;
+    const int HotkeyId = 0x4D56;
+
+    void Accept()
+    {
+        if ((DateTime.UtcNow - shownAt).TotalMilliseconds < 1000 || IsDisposed) return;
+        Close();
+        accept();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // only one popup can own the key, the others js dont show the hint
+        hotkey = RegisterHotKey(Handle, HotkeyId, 0x1 | 0x2 | 0x4000, 0x59);   // ctrl+alt+y, no repeat
+        hint.Visible = hotkey;
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == 0x0312 && (int)m.WParam == HotkeyId) Accept();   // WM_HOTKEY
+        base.WndProc(ref m);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        if (hotkey) UnregisterHotKey(Handle, HotkeyId);
+        base.OnFormClosed(e);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool RegisterHotKey(nint h, int id, uint mods, uint vk);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool UnregisterHotKey(nint h, int id);
 
     protected override void OnPaint(PaintEventArgs e)
     {

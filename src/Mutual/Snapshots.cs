@@ -17,7 +17,7 @@ static class Snapshots
             "main-live" => new MainForm(settings, offline: true).Demo(online: true, live: true),
             "main-unpaired" => new MainForm(settings, offline: true).Demo(unpaired: true),
             "pair" => new PairDialog(settings, Path.Combine(Path.GetTempPath(), "mutual-snapshot-identity")),
-            "picker" => new SourcePicker(),
+            "picker" => new SourcePicker().Demo(),
             "settings" => new SettingsDialog(settings),
             "prompt" => Prompt.Make("The key Mutual trusts for alex changed, but you didn't pair again.\n\nNew safety code: 7D4F-9B98-8960\n\nIf neither of you re-paired, something on this PC changed it. Pair again and compare the safety code out loud.", "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning),
             "request" => new RequestPopup("alex", new Request(RequestKind.Stream, "window: RimWorld by Ludeon Studios"), () => { }),
