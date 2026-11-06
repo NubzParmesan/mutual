@@ -45,6 +45,8 @@ public sealed class StreamReceiver : IDisposable
     public event Action<ID3D11Texture2D, int, int>? FrameReady;   // bgra texture, width, height (on the decode thread)
     public event Action<StreamInfo>? InfoChanged;
     public event Action<string>? Ended;
+    // set right before Ended fires, so something that hooked Ended late can still tell it already happened
+    public string? EndReason { get; private set; }
     // the host stopped on purpose (not the link breaking)
     public bool EndedByHost { get; private set; }
     public event Action<string>? ClipboardReceived;
@@ -139,8 +141,9 @@ public sealed class StreamReceiver : IDisposable
                 }
             }
         }
-        catch (Exception e) { if (running) why = "stream broke: " + e.Message; }   // a throw during shutdown would kill the app off this thread
+        catch (Exception e) { if (running) why = "stream broke: " + e.Message.Trim().TrimEnd('.'); }   // a throw during shutdown would kill the app off this thread
         running = false;
+        EndReason = why;
         Ended?.Invoke(why);
     }
 

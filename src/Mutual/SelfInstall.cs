@@ -64,7 +64,8 @@ static class SelfInstall
         }
         if (check == Check.Unknown) msg += "\n\n(Couldn't check this copy against the official release. Only say yes if you got it from github.com/" + OfficialRepo + ".)";
 
-        if (!(updating && check == Check.Match) && Prompt.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        // the updater already checked this download against the release, so the admin prompt is the yes
+        if (!(updating && check != Check.Mismatch) && Prompt.Show(msg, "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
         {
             if (!installed && !fromOld) { settings.DeclinedInstall = true; settings.Save(); }
             return true;
@@ -80,12 +81,22 @@ static class SelfInstall
             Process.Start(new ProcessStartInfo(Exe) { UseShellExecute = true });
             return false;
         }
-        catch (System.ComponentModel.Win32Exception) { return true; }   // said no at the admin prompt
+        catch (System.ComponentModel.Win32Exception) { return BackToInstalled(updating); }   // said no at the admin prompt
         catch (Exception e)
         {
+            if (updating) { Prompt.Show("Couldn't update: " + e.Message + "\n\nOpening the Mutual you already have.", "Mutual"); return BackToInstalled(true); }
             Prompt.Show("Couldn't install: " + e.Message + "\n\nRunning from here instead.", "Mutual");
             return true;
         }
+    }
+
+    // an update that didnt go thru opens the installed one again. before, this copy (sitting in temp)
+    // kept running instead, where the firewall rules dont apply, so your friend saw you offline
+    static bool BackToInstalled(bool updating)
+    {
+        if (!updating || !File.Exists(Exe)) return true;
+        try { Process.Start(new ProcessStartInfo(Exe) { UseShellExecute = true }); return false; }
+        catch { return true; }
     }
 
     // the admin half: stop the old installed copy and put this one in Program Files. it only ever

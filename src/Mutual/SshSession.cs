@@ -89,7 +89,7 @@ sealed class SshSession : DarkForm
             // old notifier and mutual both know MSN1. it only asks, doesnt turn anything on
             if (ping) _ = Notify.SendAsync(p.PeerAddress, p.PeerPorts.Ping, p.Own, p.PeerCertRaw, new Request(RequestKind.Ssh, null), legacy: true);
 
-            link = await PeerLink.OpenAsync(p.Role, p.Role == LinkRole.Server ? p.BindAddress : System.Net.IPAddress.Any, p.PeerAddress, p.PeerPorts.Consent,
+            link = await PeerLink.OpenAsync(p.Role, p.Role == LinkRole.Server ? p.BindAddress : System.Net.IPAddress.Any, p.PeerAddress, p.ConsentPort,
                 p.Own, p.PeerCertRaw, TimeSpan.FromMinutes(10), stop.Token);
             await PeerLink.ExchangeByteAsync(link, LegacyConsent.Present, stop.Token);
             if (watchdog.HasExited) throw new InvalidOperationException("Watchdog failed to start; SSH remains off.");

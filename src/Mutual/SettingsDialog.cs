@@ -8,16 +8,17 @@ sealed class SettingsDialog : DarkForm
     readonly Switch sound = new() { Text = "Share sound when streaming", Description = "Just the shared program's sound for a window or game. Discord is always left out." };
     readonly Switch clip = new() { Text = "Share copied text during streams", Description = "Anything you copy while a stream is up goes to your friend, and theirs comes to you." };
     readonly Switch login = new() { Text = "Start with Windows", Description = "Sits in the tray so your friend can reach you without you opening it." };
+    readonly Switch updates = new() { Text = "Get updates ready on their own", Description = "Downloads new versions in the background so updating is one click. Nothing installs until you say yes." };
 
     public SettingsDialog(AppSettings settings)
     {
         s = settings;
         Dialog();
         Text = "Settings";
-        ClientSize = new Size(480, 716);
+        ClientSize = new Size(480, 776);
         name.Box.Text = s.MyName; name.Box.MaxLength = 40;
         server.Box.Text = s.Rendezvous; server.Box.PlaceholderText = "host:port";
-        upnp.Checked = s.UseUpnp; sound.Checked = s.ShareSound; clip.Checked = s.ShareClipboard; login.Checked = Takeover.StartsAtLogin();
+        upnp.Checked = s.UseUpnp; sound.Checked = s.ShareSound; clip.Checked = s.ShareClipboard; login.Checked = Takeover.StartsAtLogin(); updates.Checked = s.AutoDownload;
         // upnp means nothing without a server
         void SyncUpnp() => upnp.Enabled = server.Box.Text.Trim().Length > 0;
         server.Box.TextChanged += (_, _) => SyncUpnp();
@@ -31,7 +32,7 @@ sealed class SettingsDialog : DarkForm
 
         var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 8, 20, 8), AutoScroll = true };
         // docked top so they go in backwards
-        Section(body, "This PC", login);
+        Section(body, "This PC", login, Gap(), updates);
         Section(body, "While streaming", sound, Gap(), clip);
         Section(body, "Connection", Theme.Caption("Rendezvous server, only if you're not on the same VPN"), server, Gap(14), upnp);
         Section(body, "You", Theme.Caption("Your name, it goes in your pairing code"), name);
@@ -61,8 +62,9 @@ sealed class SettingsDialog : DarkForm
     {
         s.MyName = string.IsNullOrWhiteSpace(name.Box.Text) ? Environment.UserName : name.Box.Text.Trim();
         s.Rendezvous = server.Box.Text.Trim();
-        s.UseUpnp = upnp.Checked; s.ShareSound = sound.Checked; s.ShareClipboard = clip.Checked;
-        try { Takeover.SetStartsAtLogin(login.Checked); } catch { }
+        s.UseUpnp = upnp.Checked; s.ShareSound = sound.Checked; s.ShareClipboard = clip.Checked; s.AutoDownload = updates.Checked;
+        try { Takeover.SetStartsAtLogin(login.Checked); }
+        catch (Exception e) { Prompt.Show(this, "Couldn't change Start with Windows: " + e.Message, "Mutual"); }
         s.Save();
         DialogResult = DialogResult.OK;
         Close();

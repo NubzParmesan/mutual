@@ -26,6 +26,8 @@ public sealed class Pairing
     public required byte[] PeerCertRaw { get; init; }
     public Ports MyPorts { get; init; } = Ports.Default;
     public Ports PeerPorts { get; init; } = Ports.Default;
+    // the listening side waits on its own port, the dialing side calls the friends. only matters when the two differ
+    public int ConsentPort => Role == LinkRole.Server ? MyPorts.Consent : PeerPorts.Consent;
     // where the activity log and per pairing stuff lives
     public required string Folder { get; init; }
     // came from the old mutual ssh folder so its scripts and notifier are around

@@ -79,7 +79,13 @@ static class Program
             st.Tick += (_, _) => { st.Stop(); form.StopStreamForTests(); };
             st.Start();
         }
-        if (args.Contains("--tray")) Application.Run();   // started at login, stay in the tray
+        if (args.Contains("--tray"))
+        {
+            // started at login, stay in the tray. quitting closes a form nobody showed, which on its own
+            // left the process running invisibly (holding the ports, so opening mutual again did nothing)
+            form.FormClosed += (_, _) => Application.ExitThread();
+            Application.Run();
+        }
         else Application.Run(form);
         return 0;
     }
@@ -104,6 +110,7 @@ static class Program
                     case "send-file": form.SendFile(parts[1]); break;
                     case "play-rimworld": form.PlayRimWorldNow(); break;
                     case "update-now": _ = form.UpdateNowForTests(); break;
+                    case "quit": form.QuitForTests(); break;
                     case "sever-after":
                         // testing reconnect, the link js dies a few seconds in
                         var s2 = new System.Windows.Forms.Timer { Interval = int.Parse(parts[1]) * 1000 };

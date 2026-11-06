@@ -20,7 +20,7 @@ sealed class MainForm : DarkForm
     readonly NotifyIcon tray;
     readonly Label friendName = new(), friendStatus = new(), pairInfo = new();
     readonly Avatar avatar = new();
-    readonly Banner setupBar = new(), updateBar = new(), sessionBar = new();
+    readonly Banner setupBar = new(), updateBar = new(), sessionBar = new(), versionBar = new();
     readonly Panel header = new(), tiles = new(), welcome = new(), feedHead = new(), feedHost = new();
     FlatButton? updateButton;
     readonly ToolStripMenuItem trayUpdate = new("Update Mutual…") { Visible = false };
@@ -56,6 +56,7 @@ sealed class MainForm : DarkForm
         menu.Items.Add("Settings…", null, (_, _) => { ShowMe(); OpenSettings(); });
         menu.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
         menu.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
+        menu.Items.Add("Report a problem…", null, (_, _) => { ShowMe(); ReportProblem(); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(trayUpdate);
         trayUpdate.Click += (_, _) => { ShowMe(); _ = UpdateNow(); };
@@ -69,6 +70,11 @@ sealed class MainForm : DarkForm
         BuildLayout();
         LoadPairing();
         if (offline) return;
+        // started at login it sits in the tray and never gets shown, so no window handle, and every
+        // BeginInvoke from the network threads threw. your friends invites just vanished until you
+        // opened the window once. a hidden handle fixes that and shows nothing
+        CreateHandle();
+        NoteIfJustUpdated();
         StartServices();
         if (Updater.Enabled) _ = UpdateLoop(quit.Token);
         var refresh = new System.Windows.Forms.Timer { Interval = 3000 };
@@ -110,6 +116,8 @@ sealed class MainForm : DarkForm
         setupBar.AddButton("Set up…", RunSetup);
         updateBar.Style(Theme.Glyph.Update, Theme.Online, Theme.OnlineSoft);
         updateButton = updateBar.AddButton("Update", () => _ = UpdateNow());
+        versionBar.Style(Theme.Glyph.Info, Theme.Accent, Theme.AccentSoft);
+        versionBar.AddButton("Copy a note", CopyUpdateNote, ButtonKind.Secondary);
 
         // the four things you can do
         tiles.Dock = DockStyle.Top; tiles.Height = 76 * 2 + 8 + 12; tiles.Padding = new Padding(16, 0, 16, 12);
@@ -171,6 +179,7 @@ sealed class MainForm : DarkForm
         Controls.Add(tiles);
         Controls.Add(Slot(sessionBar));
         Controls.Add(Slot(setupBar));
+        Controls.Add(Slot(versionBar));
         Controls.Add(Slot(updateBar));
         Controls.Add(header);
 
@@ -195,6 +204,7 @@ sealed class MainForm : DarkForm
         if (Updater.Enabled) m.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdateLoud());
         m.Items.Add(new ToolStripSeparator());
         m.Items.Add("Open log folder", null, (_, _) => OpenLogFolder());
+        m.Items.Add("Report a problem…", null, (_, _) => ReportProblem());
         m.Items.Add("Clear activity history…", null, (_, _) => ClearHistory());
         m.Items.Add(new ToolStripSeparator());
         m.Items.Add("Quit Mutual", null, (_, _) => Quit());
@@ -205,6 +215,26 @@ sealed class MainForm : DarkForm
     void OpenLogFolder() => Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppSettings.Dir + "\"") { UseShellExecute = true });
 
     void Quit() { quitting = true; Close(); }
+
+    // windows messages already end in a period, which read as ".." inside the brackets
+    static string Why(Exception e) => e.Message.Trim().TrimEnd('.');
+
+    static void OpenPage(string url) { try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { } }
+
+    // copies what someone helping you would ask for first. mutual.log has your friends name and address
+    // in it, so it says so instead of sending anything anywhere itself
+    void ReportProblem()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Mutual " + Updater.Current + " on " + Environment.OSVersion.VersionString + (AppSettings.Profile != null ? " (profile " + AppSettings.Profile + ")" : ""));
+        sb.AppendLine("installed: " + SelfInstall.RunningInstalled + ", paired: " + (pairing != null) + ", friend online: " + online + ", friend on: " + (peerVersion?.ToString() ?? (online ? "older than 1.4" : "unknown")));
+        sb.AppendLine("--- last lines of mutual.log");
+        try { foreach (var l in File.ReadLines(Diag.PathName).TakeLast(60)) sb.AppendLine(l); } catch { sb.AppendLine("(no log yet)"); }
+        try { Clipboard.SetText(sb.ToString()); } catch { }
+        if (Prompt.Show(this, "Copied what's needed to look into it (your version, Windows version and the end of Mutual's log).\n\nOpen GitHub to write it up and paste it in? The log has your friend's name and address in it, cut those out if you'd rather.",
+                "Report a problem", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK)
+            OpenPage("https://github.com/" + SelfInstall.OfficialRepo + "/issues/new");
+    }
 
     void AllowDropEverywhere(Control c)
     {
@@ -255,7 +285,7 @@ sealed class MainForm : DarkForm
             log = new ActivityLog(Path.Combine(pairing.Folder, "activity.jsonl"));
             CheckPairingUnchanged(pairing);
             friendName.Text = pairing.PeerName;
-            pairInfo.Text = pairing.PeerAddress + "   ·   " + (pairing.IsLegacy ? "paired through Mutual SSH" : "safety code " + pairing.SafetyCode);
+            pairInfo.Text = PairText(pairing);
             pairInfo.ForeColor = Theme.Faint;
             checking = true;
             friendStatus.Text = "Checking…";
@@ -273,6 +303,8 @@ sealed class MainForm : DarkForm
         RefreshActivity();
         RefreshSetup();
     }
+
+    string PairText(Pairing p) => p.PeerAddress + "   ·   " + (p.IsLegacy ? "paired through Mutual SSH" : "safety code " + p.SafetyCode) + (peerVersion != null ? "   ·   they're on " + peerVersion : "");
 
     // remembers the friends key. if its different next time and you didnt re-pair, say so loudly
     void CheckPairingUnchanged(Pairing p)
@@ -316,7 +348,7 @@ sealed class MainForm : DarkForm
     {
         if (pairing == null) return;
         services = CancellationTokenSource.CreateLinkedTokenSource(quit.Token);
-        hub = new LinkHub(pairing);
+        hub = new LinkHub(pairing) { PeerConfirms = peerVersion >= LinkConfirmSince };
         hub.Note += n => log?.Write(ActivityResult.INFO, "Mutual: " + n);
         if (!string.IsNullOrWhiteSpace(settings.Rendezvous))
         {
@@ -334,14 +366,15 @@ sealed class MainForm : DarkForm
         if (settings.HandlePings) _ = ListenForPings(services.Token);
     }
 
-    // looks for a new release now and then. the bar and tray item just say theres one, nothing
-    // downloads until you click
+    // looks for a new release now and then. a new one gets downloaded and checked in the background
+    // (setting on by default), so updating is one click and a few seconds. nothing installs without a yes
     async Task UpdateLoop(CancellationToken ct)
     {
         try { await Task.Delay(TimeSpan.FromSeconds(20), ct); } catch { return; }
         while (!ct.IsCancellationRequested)
         {
             await CheckForUpdate();
+            OfferUpdateIfQuiet();
             try { await Task.Delay(TimeSpan.FromHours(1), ct); } catch { return; }
         }
     }
@@ -352,16 +385,84 @@ sealed class MainForm : DarkForm
         var found = await Updater.CheckAsync();
         if (found == null) return update != null;
         if (update == null || found.Version > update.Version)
-            BeginInvoke(() =>
-            {
-                update = found;
-                updateBar.Message = $"Mutual {found.Version} is out. You have {Updater.Current}.";
-                updateBar.On = true;
-                trayUpdate.Text = $"Update Mutual to {found.Version}";
-                trayUpdate.Visible = true;
-                log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
-            });
+        {
+            update = found; readyExe = null;
+            updateBar.Message = $"Mutual {found.Version} is out. You have {Updater.Current}.";
+            updateBar.Style(Theme.Glyph.Update, Theme.Online, Theme.OnlineSoft);
+            updateBar.On = true;
+            trayUpdate.Text = $"Update Mutual to {found.Version}";
+            trayUpdate.Visible = true;
+            log?.Write(ActivityResult.INFO, $"Mutual: {found.Version} is out");
+            if (settings.AutoDownload) _ = GetUpdateReady(found);
+        }
         return true;
+    }
+
+    string? readyExe;
+    bool fetching;
+
+    // downloads and checks it now so the click later is instant
+    async Task GetUpdateReady(Updater.Release r)
+    {
+        if (fetching || readyExe != null) return;
+        fetching = true;
+        try
+        {
+            var exe = await Updater.DownloadAsync(r);
+            if (update != r) return;
+            readyExe = exe;
+            updateBar.Message = $"Mutual {r.Version} is ready. Updating takes a few seconds and Mutual opens again by itself.";
+            OfferUpdateIfQuiet();
+        }
+        catch (Exception e) { Diag.Write("background update download failed: " + e.Message); }   // the button still downloads it
+        finally { fetching = false; }
+    }
+
+    // anything that a restart would cut off
+    bool Busy => sharing != null || waitingForViewer != null || Watching != null || transfers > 0 || share == ShareState.Rimworld;
+    int transfers;
+
+    // a corner popup once per version, only while nothing is going on and you're not in a fullscreen game.
+    // "later" leaves the banner and tray item, it doesnt ask again for that version
+    void OfferUpdateIfQuiet()
+    {
+        if (update == null || readyExe == null || Busy || settings.SnoozedVersion == update.Version.ToString() || offerShowing || Visible) return;
+        if (SHQueryUserNotificationState(out int state) == 0 && state is 2 or 3 or 4) return;   // busy, d3d fullscreen, presenting
+        var r = update;
+        offerShowing = true;
+        var popup = new RequestPopup("Mutual", $"Mutual {r.Version} is ready", "Takes a few seconds, then Mutual opens again. Windows asks for admin once.", Theme.Glyph.Update,
+            "Update", () => { offerShowing = false; ShowMe(); _ = UpdateNow(); },
+            "Later", () => { offerShowing = false; settings.SnoozedVersion = r.Version.ToString(); settings.Save(); });
+        popup.FormClosed += (_, _) => offerShowing = false;
+        popup.Show();
+    }
+    bool offerShowing;
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+
+    // first start after an update says so, with a link to whats new
+    void NoteIfJustUpdated()
+    {
+        var now = Updater.Current.ToString();
+        var before = settings.LastVersion;
+        settings.LastVersion = now;
+        if (before == now) return;
+        settings.Save();
+        if (before == null) return;
+        log?.Write(ActivityResult.OK, $"Mutual: updated from {before} to {now}");
+        updateBar.Style(Theme.Glyph.Check, Theme.Online, Theme.OnlineSoft);
+        updateBar.Message = $"Updated to Mutual {now}.";
+        updateBar.ClearButtons();
+        updateBar.AddButton("What's new", () => OpenPage($"https://github.com/{SelfInstall.OfficialRepo}/releases/tag/v{now}"), ButtonKind.Secondary);
+        updateBar.AddButton("Got it", () => { updateBar.On = false; ResetUpdateBar(); }, ButtonKind.Secondary);
+        updateBar.On = true;
+    }
+
+    void ResetUpdateBar()
+    {
+        updateBar.ClearButtons();
+        updateBar.Style(Theme.Glyph.Update, Theme.Online, Theme.OnlineSoft);
+        updateButton = updateBar.AddButton("Update", () => _ = UpdateNow());
     }
 
     // from the menus, says something either way
@@ -381,26 +482,84 @@ sealed class MainForm : DarkForm
 
     async Task UpdateNow()
     {
-        if (update == null || updateButton == null || !updateButton.Enabled) return;
-        if (sharing != null || waitingForViewer != null) { Prompt.Show(this, "Stop the stream first, updating restarts Mutual.", "Mutual"); return; }
-        updateButton.Enabled = false; trayUpdate.Enabled = false;
-        updateBar.Message = $"Downloading {update.Version}…";
+        if (update == null) return;
+        if (updateButton is { Enabled: false } && readyExe == null) return;
+        if (Busy) { Prompt.Show(this, "Finish what's going on first (stream, file or game). Updating restarts Mutual for a few seconds.", "Mutual"); return; }
+        if (updateButton != null) updateButton.Enabled = false;
+        trayUpdate.Enabled = false;
         try
         {
-            var exe = await Updater.DownloadAsync(update);
+            var exe = readyExe;
+            if (exe == null || !File.Exists(exe))
+            {
+                updateBar.Message = $"Downloading {update.Version}…";
+                exe = await Updater.DownloadAsync(update);
+            }
             updateBar.Message = $"Installing {update.Version}. Say yes to the admin prompt.";
             Updater.Launch(exe);
             // the new copy swaps the installed one and opens itself, this one gets out of the way
-            quitting = true;
-            Close();
+            Quit();
         }
         catch (Exception e)
         {
             Diag.Write("update failed: " + e);
+            readyExe = null;
             updateBar.Message = "Update failed: " + e.Message;
             updateBar.Style(Theme.Glyph.Error, Theme.Bad, Theme.BadSoft);
-            updateButton.Enabled = true; trayUpdate.Enabled = true;
+            if (updateButton != null) updateButton.Enabled = true;
+            trayUpdate.Enabled = true;
         }
+    }
+
+    // their version, from their hello. mutual before 1.4 never says hello
+    static readonly Version LinkConfirmSince = new(1, 4, 0);
+    Version? peerVersion;
+    bool helloSent;
+    int onlineWithoutHello;
+
+    void SendHello()
+    {
+        if (pairing == null) return;
+        helloSent = true;
+        _ = Ask(new Request(RequestKind.Hello, Updater.Current.ToString()));
+    }
+
+    void OnHello(string? detail)
+    {
+        if (!System.Version.TryParse(detail, out var v)) return;
+        v = new Version(v.Major, v.Minor, Math.Max(0, v.Build));
+        bool changed = peerVersion != v;
+        peerVersion = v;
+        if (hub != null) hub.PeerConfirms = v >= LinkConfirmSince;
+        if (!helloSent) SendHello();
+        if (!changed) return;
+        if (pairing != null) pairInfo.Text = PairText(pairing);
+        RefreshVersionBar();
+        // theyre on something newer, no need to wait an hour to find out
+        if (v > Updater.Current && Updater.Enabled) _ = CheckForUpdate();
+    }
+
+    void RefreshVersionBar()
+    {
+        if (pairing == null) { versionBar.On = false; return; }
+        var me = Updater.Current;
+        var peer = pairing.PeerName;
+        if (peerVersion != null && peerVersion < me)
+            versionBar.Message = $"{peer} is on Mutual {peerVersion}, you're on {me}. Ask them to update.";
+        else if (peerVersion == null && online && onlineWithoutHello >= 3)
+            versionBar.Message = $"{peer} is on an older Mutual. Ask them to update.";
+        else { versionBar.On = false; return; }
+        versionBar.On = true;
+    }
+
+    void CopyUpdateNote()
+    {
+        try
+        {
+            Clipboard.SetText($"hey, can you update Mutual? right click its tray icon (two rings, bottom right) and pick Check for updates. or grab it from https://github.com/{SelfInstall.OfficialRepo}/releases/latest");
+            versionBar.Message = "Copied. Paste it to " + (pairing?.PeerName ?? "them") + " anywhere.";
+        }
+        catch { }
     }
 
     void StopServices()
@@ -421,6 +580,10 @@ sealed class MainForm : DarkForm
             bool up = direct || rendezvous?.PeerOnline == true;
             friendStatus.Text = !up ? "Offline" : !direct ? "Online, thru the relay" : "Online  ·  " + Math.Max(1, ms) + " ms";
             friendStatus.ForeColor = up && direct && ms > 150 ? Theme.Warn : Theme.Dim;
+            if (up && !online) { helloSent = false; onlineWithoutHello = 0; }
+            if (!up && online && hub != null) hub.PeerConfirms = false;   // whatever comes back might be a different version
+            if (up && !helloSent) SendHello();
+            if (up && peerVersion == null && ++onlineWithoutHello == 3) RefreshVersionBar();
             if (up != online || checking)
             {
                 online = up; checking = false;
@@ -517,6 +680,8 @@ sealed class MainForm : DarkForm
     void OnRequest(Request req)
     {
         if (pairing == null) return;
+        if (req.Kind == RequestKind.Hello) { OnHello(req.Detail); return; }
+        if (req.Kind == RequestKind.Decline) { OnDeclined(req.Detail); return; }
         // 3 ignored invites in 10 min and the popups go quiet for 10 min, so nobody can spam you into a misclick
         var now = DateTime.UtcNow;
         unanswered.RemoveAll(t => now - t > TimeSpan.FromMinutes(10));
@@ -535,8 +700,27 @@ sealed class MainForm : DarkForm
         log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {Asked(req.Kind)}" + (detail.Length > 0 ? ": " + detail : ""));
         if (settings.AutoAccept) { Accept(req); return; }
         unanswered.Add(now);
-        var popup = new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); });
+        var popup = new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); },
+            // tells them, so they're not left on "waiting for you to accept" for ten minutes
+            () => { if (req.Kind is RequestKind.Stream or RequestKind.File) _ = Ask(new Request(RequestKind.Decline, ((byte)req.Kind).ToString())); });
         popup.Show();
+    }
+
+    // they hit ignore on your invite
+    void OnDeclined(string? detail)
+    {
+        if (pairing == null || !byte.TryParse(detail, out var k)) return;
+        if ((RequestKind)k == RequestKind.Stream && share == ShareState.Waiting)
+        {
+            log?.Write(ActivityResult.INFO, "Mutual: " + pairing.PeerName + " said not now to the stream");
+            StopSharing();
+        }
+        else if ((RequestKind)k == RequestKind.File && offeredFiles.Count > 0)
+        {
+            var w = offeredFiles[0];
+            w.Declined = true;
+            w.Cancel.Cancel();
+        }
     }
 
     static string Asked(RequestKind k) => k switch { RequestKind.Stream => "a stream", RequestKind.File => "a file", RequestKind.Ssh => "SSH", RequestKind.Play => "a game", _ => k.ToString() };
@@ -606,10 +790,12 @@ sealed class MainForm : DarkForm
         stopRequested = false;
         if (source is BoxSource box) { boxFrame = new BoxOverlay(box); boxFrame.Show(); }
         shareSource = source.Describe();
+        inviteMissed = false;
         SetShare(ShareState.Waiting);
         log?.Write(ActivityResult.INFO, "Mutual: offered to stream " + source.Describe());
         var asked = await Ask(new Request(RequestKind.Stream, source.Describe()));
-        if (!asked) log?.Write(ActivityResult.INFO, "Mutual: couldn't reach " + p.PeerName + "'s Mutual; waiting anyway in case they open it");
+        inviteMissed = !asked;
+        if (!asked) { log?.Write(ActivityResult.INFO, "Mutual: couldn't reach " + p.PeerName + "'s Mutual; waiting anyway in case they open it"); RenderSession(); }
         var wait = TimeSpan.FromMinutes(10);
         bool first = true;
         var tally = new SessionTally();
@@ -618,19 +804,29 @@ sealed class MainForm : DarkForm
         controlBar = new ControlBar(p.PeerName, source is ScreenSource);
         controlBar.StopClicked += () => StopSharing();
         controlBar.Show();
+        // links that die right after starting get backed off and logged once
+        int quick = 0;
         while (!stopRequested)
         {
             waitingForViewer = new CancellationTokenSource();
             StreamHost host;
+            var ended = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnStatus(string s)
+            {
+                Diag.Write("host: " + s);
+                if (s == "viewer left" || s.StartsWith("stream stopped")) ended.TrySetResult(s.StartsWith("stream stopped"));
+                else if (s.StartsWith("video on") || s.StartsWith("udp unavailable") || s.StartsWith("paused") || s.StartsWith("resumed") || s.StartsWith("sound:"))
+                    try { BeginInvoke(() => log?.Write(ActivityResult.INFO, "Mutual: " + s)); } catch { }
+            }
             try
             {
                 var link = await hub!.OpenAsync(Channel.Stream, wait, waitingForViewer.Token);
                 link.ReadTimeout = 15000;
-                host = new StreamHost(new Stream.Wire(link), source, allowInput: false, openUdp: UdpLane(isHost: true), shareSound: settings.ShareSound) { Tally = tally };
+                host = new StreamHost(new Stream.Wire(link), source, allowInput: false, openUdp: UdpLane(isHost: true), shareSound: settings.ShareSound, onStatus: OnStatus) { Tally = tally };
             }
             catch (Exception e)
             {
-                if (!stopRequested) log?.Write(ActivityResult.INFO, "Mutual: " + (first ? "stream not started" : p.PeerName + " didn't come back") + " (" + e.Message + ")");
+                if (!stopRequested) log?.Write(ActivityResult.INFO, "Mutual: " + (first ? "stream not started (" + Why(e) + ")" : p.PeerName + " didn't come back (" + Why(e) + ")"));
                 break;
             }
             finally { waitingForViewer?.Dispose(); waitingForViewer = null; }
@@ -640,31 +836,41 @@ sealed class MainForm : DarkForm
             if (controlFromStart) host.SetControl(true);
             using var clip = settings.ShareClipboard ? new ClipboardSync(this, host.SendClipboard) : null;
             if (clip != null) host.ClipboardReceived += clip.Apply;
-            var ended = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            host.Status += s => Diag.Write("host: " + s);
-            host.Status += s =>
+            // an older mutual on their end hangs up on us until they click accept, so it only counts as
+            // live once their viewer actually says something
+            var lived = Stopwatch.StartNew();
+            while (!ended.Task.IsCompleted && !host.HeardFromViewer) await Task.WhenAny(ended.Task, Task.Delay(100));
+            if (host.HeardFromViewer)
             {
-                if (s == "viewer left" || s.StartsWith("stream stopped")) ended.TrySetResult(host.EndedByViewer || s.StartsWith("stream stopped"));
-                else if (s.StartsWith("video on") || s.StartsWith("udp unavailable") || s.StartsWith("paused") || s.StartsWith("resumed") || s.StartsWith("sound:"))
-                    BeginInvoke(() => log?.Write(ActivityResult.INFO, "Mutual: " + s));
-            };
-            log?.Write(ActivityResult.OK, "Mutual: " + (first ? "streaming " + source.Describe() + " to " + p.PeerName : p.PeerName + " is back, streaming again"));
-            SetShare(ShareState.Live);
-            bool onPurpose = await ended.Task;
+                if (quick < 2) log?.Write(ActivityResult.OK, "Mutual: " + (first ? "streaming " + source.Describe() + " to " + p.PeerName : p.PeerName + " is back, streaming again"));
+                SetShare(ShareState.Live);
+            }
+            bool onPurpose = await ended.Task || host.EndedByViewer;
             controlBar?.Attach(null);
             host.Dispose();
             if (sharing == host) sharing = null;
             if (stopRequested || onPurpose) { if (!stopRequested) log?.Write(ActivityResult.INFO, "Mutual: " + p.PeerName + " closed the stream"); break; }
-            log?.Write(ActivityResult.INFO, "Mutual: the link to " + p.PeerName + " dropped, waiting up to a minute for it to come back");
+            if (!host.HeardFromViewer)
+            {
+                // nobody on the other end yet, so not a drop. try again quietly
+                for (int ms = 500; ms > 0 && !stopRequested; ms -= 100) await Task.Delay(100);
+                continue;
+            }
+            quick = lived.ElapsedMilliseconds < 3000 ? quick + 1 : 0;
+            if (quick < 2) log?.Write(ActivityResult.INFO, "Mutual: the link to " + p.PeerName + " dropped, waiting up to a minute for it to come back");
+            else if (quick == 3) log?.Write(ActivityResult.FAILED, "Mutual: the stream keeps dropping as soon as it starts, slowing down the retries" + (host.Failure != null ? " (" + Why(host.Failure) + ")" : "") + ". their activity should say why");
             SetShare(ShareState.Reconnecting);
             wait = TimeSpan.FromMinutes(1);
             first = false;
+            // 1, 2, 4 then 8 s, in small steps so stop still works right away
+            if (quick >= 3) for (int ms = Math.Min(8000, 1000 << Math.Min(quick - 3, 3)); ms > 0 && !stopRequested; ms -= 250) await Task.Delay(250);
         }
         if (tally.Reports > 0) log?.Write(ActivityResult.OK, "Mutual: streamed to " + p.PeerName + ": " + tally.Describe());
         EndShare();
     }
 
     public void StopStreamForTests() => StopSharing();
+    public void QuitForTests() => Quit();
 
     void StopSharing(string? why = null)
     {
@@ -695,6 +901,9 @@ sealed class MainForm : DarkForm
         int soundChunks = 0;
         // says whether any sound came thru, so "no sound" can be told apart from "sound never left their pc"
         void Summary() { if (summarized || tally.Reports == 0) return; summarized = true; log?.Write(ActivityResult.OK, "Mutual: watched " + pairing!.PeerName + ": " + tally.Describe() + (soundChunks > 0 ? $", sound {soundChunks / 100}s" : ", no sound came thru")); }
+        // same as the sharing side, a stream that dies right as it starts gets backed off and its reason logged once
+        int quick = 0;
+        string? lastWhy = null;
         for (int attempt = 0; ; attempt++)
         {
             StreamReceiver rx;
@@ -708,7 +917,7 @@ sealed class MainForm : DarkForm
             }
             catch (Exception e)
             {
-                log?.Write(ActivityResult.INFO, "Mutual: " + (attempt == 0 ? "couldn't join the stream" : "couldn't get back into the stream") + " (" + e.Message + ")");
+                log?.Write(ActivityResult.INFO, "Mutual: " + (attempt == 0 ? "couldn't join the stream" : "couldn't get back into the stream") + " (" + Why(e) + ")");
                 if (attempt == 0 && !settings.AutoAccept) Prompt.Show(this, "Couldn't join the stream: " + e.Message, "Mutual");
                 Summary();
                 return;
@@ -719,27 +928,38 @@ sealed class MainForm : DarkForm
             if (lastBounds is { } b) { view.StartPosition = FormStartPosition.Manual; view.Bounds = b; }
             var closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool userClosed = true;
-            rx.Ended += why =>
+            bool handled = false;
+            void OnEnded(string why)
             {
+                if (handled) return;
+                handled = true;
                 Diag.Write("viewer: " + why);
+                lastWhy = why;
                 // they stopped sharing, the window stays open on the last picture but the session is over
-                if (rx.EndedByHost) { try { BeginInvoke(Summary); } catch { } return; }
+                if (rx.EndedByHost) { Summary(); return; }
                 // link broke, close the window ourselves and try again
                 userClosed = false;
-                try { view.BeginInvoke(() => { lastBounds = view.Bounds; view.Close(); }); } catch { }
-            };
+                if (!view.IsDisposed) { lastBounds = view.Bounds; view.Close(); }
+            }
+            rx.Ended += why => { try { BeginInvoke(() => OnEnded(why)); } catch { } };
             view.FormClosed += (_, _) => { rx.Dispose(); Watching = null; closed.TrySetResult(true); };
             Watching = view; WatchingReceiver = rx;
             watchingWhat = what ?? "screen";
             RenderSession();
             view.Show();
-            log?.Write(ActivityResult.OK, "Mutual: " + (attempt == 0 ? "watching " + pairing.PeerName + "'s stream" : "back in " + pairing.PeerName + "'s stream"));
+            // it can end before Ended got hooked up, or before the window had a handle to close
+            if (rx.EndReason is { } early) OnEnded(early);
+            if (quick < 2) log?.Write(ActivityResult.OK, "Mutual: " + (attempt == 0 ? "watching " + pairing.PeerName + "'s stream" : "back in " + pairing.PeerName + "'s stream"));
+            var lived = Stopwatch.StartNew();
             await closed.Task;
             watchingWhat = null;
             RenderSession();
             if (userClosed || rx.EndedByHost) { Summary(); return; }
-            log?.Write(ActivityResult.INFO, "Mutual: lost the stream, trying to get back in");
+            quick = lived.ElapsedMilliseconds < 3000 ? quick + 1 : 0;
+            if (quick < 2) log?.Write(ActivityResult.INFO, "Mutual: lost the stream (" + (lastWhy ?? "no reason") + "), trying to get back in");
+            else if (quick == 3) log?.Write(ActivityResult.FAILED, "Mutual: the stream keeps dropping as soon as it starts (" + (lastWhy ?? "no reason") + "), slowing down the retries");
             wait = TimeSpan.FromMinutes(1);
+            if (quick >= 3) await Task.Delay(Math.Min(8000, 1000 << Math.Min(quick - 3, 3)));
         }
     }
 
@@ -793,6 +1013,8 @@ sealed class MainForm : DarkForm
     string shareSource = "";
     string? watchingWhat;
     bool rimCancelled;
+    // the invite never got to them (offline, or mutual closed), so "waiting for them to accept" would be a lie
+    bool inviteMissed;
 
     void SetShare(ShareState s) { share = s; RenderSession(); }
 
@@ -808,7 +1030,7 @@ sealed class MainForm : DarkForm
         {
             case ShareState.Waiting:
                 sessionBar.Style(Theme.Glyph.Screen, Theme.Accent, Theme.AccentSoft);
-                sessionBar.Message = "Waiting for " + peer + " to accept " + Nice(shareSource);
+                sessionBar.Message = inviteMissed ? "Couldn't reach " + peer + ". Waiting in case they open Mutual" : "Waiting for " + peer + " to accept " + Nice(shareSource);
                 sessionBar.AddButton("Cancel", () => StopSharing(), ButtonKind.Secondary);
                 break;
             case ShareState.Live:
@@ -870,19 +1092,25 @@ sealed class MainForm : DarkForm
         var win = new TransferWindow(Path.GetFileName(path), size, sending: true, "Waiting for " + p.PeerName + " to accept…");
         win.Show();
         log?.Write(ActivityResult.INFO, "Mutual: offered " + Path.GetFileName(path) + " (" + TransferWindow.Size(size) + ")");
+        transfers++;
+        offeredFiles.Add(win);
         try
         {
-            await Ask(new Request(RequestKind.File, FileTransfer.Describe(path)));
+            if (!await Ask(new Request(RequestKind.File, FileTransfer.Describe(path))))
+                win.Status = "Couldn't reach " + p.PeerName + "'s Mutual. Still waiting in case they open it.";
             using var link = await hub!.OpenAsync(Channel.File, TimeSpan.FromMinutes(10), win.Cancel.Token);
+            offeredFiles.Remove(win);
             link.ReadTimeout = link.WriteTimeout = 30000;
             win.Status = "Sending to " + p.PeerName;
             await FileTransfer.SendAsync(link, path, win.Progress, win.Cancel.Token);
             log?.Write(ActivityResult.OK, "Mutual: sent " + Path.GetFileName(path) + ", verified by " + p.PeerName);
         }
-        catch (Exception e) when (!win.Cancel.IsCancellationRequested) { log?.Write(ActivityResult.FAILED, "Mutual: sending " + Path.GetFileName(path) + " failed (" + e.Message + ")"); }
-        catch (Exception) { log?.Write(ActivityResult.INFO, "Mutual: sending " + Path.GetFileName(path) + " cancelled"); }
-        finally { if (!win.IsDisposed) win.Close(); }
+        catch (Exception e) when (!win.Cancel.IsCancellationRequested) { log?.Write(ActivityResult.FAILED, "Mutual: sending " + Path.GetFileName(path) + " failed (" + Why(e) + ")"); }
+        catch (Exception) { log?.Write(ActivityResult.INFO, "Mutual: " + (win.Declined ? p.PeerName + " said no to " + Path.GetFileName(path) : "sending " + Path.GetFileName(path) + " cancelled")); }
+        finally { transfers--; offeredFiles.Remove(win); if (!win.IsDisposed) win.Close(); }
     }
+
+    readonly List<TransferWindow> offeredFiles = new();
 
     async Task ReceiveFile(string? detail)
     {
@@ -890,6 +1118,7 @@ sealed class MainForm : DarkForm
         if (!EnsureFirewall()) return;
         var win = new TransferWindow(name, size, sending: false, "From " + pairing.PeerName + ", saving to Downloads");
         win.Show();
+        transfers++;
         try
         {
             using var link = await hub.OpenAsync(Channel.File, TimeSpan.FromMinutes(2), win.Cancel.Token);
@@ -898,9 +1127,9 @@ sealed class MainForm : DarkForm
             log?.Write(ActivityResult.OK, "Mutual: received " + Path.GetFileName(saved) + " from " + pairing.PeerName + " (checked)");
             if (!settings.AutoAccept) Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "/select,\"" + saved + "\"") { UseShellExecute = true });
         }
-        catch (Exception e) when (!win.Cancel.IsCancellationRequested) { log?.Write(ActivityResult.FAILED, "Mutual: receiving " + name + " failed (" + e.Message + ")"); }
+        catch (Exception e) when (!win.Cancel.IsCancellationRequested) { log?.Write(ActivityResult.FAILED, "Mutual: receiving " + name + " failed (" + Why(e) + ")"); }
         catch (Exception) { log?.Write(ActivityResult.INFO, "Mutual: receiving " + name + " cancelled"); }
-        finally { if (!win.IsDisposed) win.Close(); }
+        finally { transfers--; if (!win.IsDisposed) win.Close(); }
     }
 
     // ssh
@@ -947,13 +1176,13 @@ sealed class MainForm : DarkForm
     // for tests, what this copy is doing rn as one json line
     public string Report() => JsonSerializer.Serialize(new
     {
-        paired = pairing != null, online,
+        paired = pairing != null, online, peerVersion = peerVersion?.ToString(), confirms = hub?.PeerConfirms ?? false,
         sharing = sharing != null, framesSent = sharing?.FramesSent ?? 0, hostTransport = sharing?.Transport,
         watching = Watching != null, presented = Watching?.Presented ?? 0, viewerStats = sharing?.LastStats,
     });
 
     // fake states for --snapshot-ui
-    public MainForm Demo(bool online = false, bool live = false, bool unpaired = false)
+    public MainForm Demo(bool online = false, bool live = false, bool unpaired = false, bool behind = false)
     {
         if (unpaired) { ignoreSaved = true; LoadPairing(); activity.SetRows(new()); return this; }
         // readme pictures use made up names, never a real pairing
@@ -974,6 +1203,14 @@ sealed class MainForm : DarkForm
         });
         if (online) { this.online = true; checking = false; friendStatus.Text = "Online  ·  18 ms"; avatar.Ring = Theme.Online; }
         if (live) { shareSource = "window: RimWorld by Ludeon Studios"; SetShare(ShareState.Live); }
+        if (behind)
+        {
+            pairInfo.Text = "25.14.88.203   ·   safety code 7D4F-9B98-8960   ·   they're on 1.3.3";
+            versionBar.Message = "alex is on Mutual 1.3.3, you're on 1.4.0. Ask them to update.";
+            versionBar.On = true;
+            updateBar.Message = "Mutual 1.4.1 is ready. Updating takes a few seconds and Mutual opens again by itself.";
+            updateBar.On = true;
+        }
         return this;
     }
     bool ignoreSaved;

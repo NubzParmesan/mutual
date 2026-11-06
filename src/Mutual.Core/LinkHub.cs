@@ -22,6 +22,13 @@ public sealed class LinkHub : IDisposable
 
     // the relay, tried if connecting directly hasnt worked after a few seconds
     public Func<Channel, CancellationToken, Task<Stream>>? RelayDial { get; set; }
+
+    // their mutual (1.4+) says "got it" once a link really reached someone waiting for it. without that
+    // the dialing side counted a link as working as soon as tls finished, even when the other pc hung up
+    // right after because nobody had clicked accept yet. thats what made streams rejoin 80 times in a few
+    // seconds and files fail the instant they were offered. set once their hello says theyre new enough
+    public bool PeerConfirms { get; set; }
+    const byte WantsConfirm = 0x80, Confirmed = 0xA5;
     public event Action<string>? Note;
 
     public LinkHub(Pairing pairing) { p = pairing; }
@@ -121,8 +128,14 @@ public sealed class LinkHub : IDisposable
         try
         {
             if (ssl.Read(b, 0, 1) != 1) throw new IOException();
-            var ch = (Channel)b[0];
-            if ((expect == null || expect == ch) && waiting.TryGetValue(ch, out var tcs) && tcs.TrySetResult(ssl)) return true;
+            bool confirm = (b[0] & WantsConfirm) != 0;
+            var ch = (Channel)(b[0] & ~WantsConfirm);
+            if ((expect == null || expect == ch) && waiting.TryGetValue(ch, out var tcs) && !tcs.Task.IsCompleted)
+            {
+                // say so before handing it over, whoever gets it might start writing right away
+                if (confirm) { ssl.Write(new[] { Confirmed }); ssl.Flush(); }
+                if (tcs.TrySetResult(ssl)) return true;
+            }
         }
         catch (Exception) { }
         ssl.Dispose(); tcp?.Dispose();
@@ -149,8 +162,7 @@ public sealed class LinkHub : IDisposable
                 await c.ConnectAsync(p.PeerAddress, p.PeerPorts.Stream, attempt.Token);
                 c.ReceiveTimeout = c.SendTimeout = 12000;
                 var ssl = await PeerLink.SecureAsync(c.GetStream(), LinkRole.Client, p.Own, p.PeerCertRaw, ct);
-                ssl.Write(new[] { (byte)ch });
-                ssl.Flush();
+                await AskForAsync(ssl, ch, ct);
                 return ssl;
             }
             catch (Exception) when (!ct.IsCancellationRequested)
@@ -167,9 +179,28 @@ public sealed class LinkHub : IDisposable
     {
         var raw = await RelayDial!(ch, ct);
         var ssl = await PeerLink.SecureAsync(raw, LinkRole.Client, p.Own, p.PeerCertRaw, ct);
-        ssl.Write(new[] { (byte)ch });
-        ssl.Flush();
+        await AskForAsync(ssl, ch, ct);
         return ssl;
+    }
+
+    // says which channel, and if they confirm, waits till they do. no confirm = nobodys waiting
+    // on their end yet (they hung up), so this throws and the dial loop tries again in a bit
+    async Task AskForAsync(SslStream ssl, Channel ch, CancellationToken ct)
+    {
+        bool confirm = PeerConfirms;
+        ssl.Write(new[] { (byte)((byte)ch | (confirm ? WantsConfirm : 0)) });
+        ssl.Flush();
+        if (!confirm) return;
+        var got = new byte[1];
+        try
+        {
+            using var t = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            t.CancelAfter(5000);
+            if (await ssl.ReadAsync(got, t.Token) == 1 && got[0] == Confirmed) return;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested) { }
+        ssl.Dispose();
+        throw new IOException("not accepted on their end yet");
     }
 
     public void Dispose()

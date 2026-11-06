@@ -35,6 +35,17 @@ public class PairingHubTests
         Assert.Throws<FormatException>(() => Pairing.ReadCode("hello"));
     }
 
+    // the ssh yes/no link never connected when the two pcs had different ports, each side used the friends number
+    [Fact]
+    public void Both_sides_use_the_listeners_port_for_the_ssh_link()
+    {
+        var (a, b) = Pair();
+        Assert.NotEqual(a.MyPorts.Consent, b.MyPorts.Consent);
+        var listener = a.Role == LinkRole.Server ? a : b;
+        Assert.Equal(listener.MyPorts.Consent, a.ConsentPort);
+        Assert.Equal(listener.MyPorts.Consent, b.ConsentPort);
+    }
+
     [Theory]
     [InlineData("25.1.2.3", true)]
     [InlineData("my-pc.local", true)]
@@ -92,6 +103,34 @@ public class PairingHubTests
         try { using var x = await unwanted; var buf = new byte[1]; x.ReadTimeout = 2000; Assert.ThrowsAny<IOException>(() => x.ReadExactly(buf)); }
         catch (TimeoutException) { }
         catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task Dialing_before_they_accept_waits_instead_of_getting_a_dead_link()
+    {
+        var (a, b) = Pair();
+        using var ha = new LinkHub(a) { PeerConfirms = true }; using var hb = new LinkHub(b) { PeerConfirms = true };
+        var server = a.Role == LinkRole.Server ? ha : hb; var client = a.Role == LinkRole.Server ? hb : ha;
+        _ = server.OpenAsync(Channel.Stream, TimeSpan.FromSeconds(1));   // listening, but not for files
+        // the oct 8 case: the offer goes out and the dialer connects before the popup gets clicked
+        var dial = client.OpenAsync(Channel.File, TimeSpan.FromSeconds(15));
+        await Task.Delay(2500);
+        Assert.False(dial.IsCompleted);
+        var accept = server.OpenAsync(Channel.File, TimeSpan.FromSeconds(10));
+        using var lc = await dial; using var ls = await accept;
+        lc.Write(new byte[] { 7 }); lc.Flush();
+        var one = new byte[1]; await ls.ReadExactlyAsync(one);
+        Assert.Equal(7, one[0]);
+    }
+
+    [Fact]
+    public async Task Nobody_accepting_times_out_when_they_confirm()
+    {
+        var (a, b) = Pair();
+        using var ha = new LinkHub(a) { PeerConfirms = true }; using var hb = new LinkHub(b) { PeerConfirms = true };
+        var server = a.Role == LinkRole.Server ? ha : hb; var client = a.Role == LinkRole.Server ? hb : ha;
+        _ = server.OpenAsync(Channel.Stream, TimeSpan.FromSeconds(4));
+        await Assert.ThrowsAsync<TimeoutException>(() => client.OpenAsync(Channel.File, TimeSpan.FromSeconds(3)));
     }
 
     [Fact]

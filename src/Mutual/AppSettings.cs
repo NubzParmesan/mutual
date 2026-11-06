@@ -26,6 +26,12 @@ sealed class AppSettings
     public bool ShortcutsMade { get; set; }
     // told you once that closing the window keeps it in the tray
     public bool TrayHintShown { get; set; }
+    // downloads new versions in the background so updating is one click (still asks before installing)
+    public bool AutoDownload { get; set; } = true;
+    // said later to the update popup for this version
+    public string? SnoozedVersion { get; set; }
+    // the version that ran last, so the first start after an update can say so
+    public string? LastVersion { get; set; }
     // testing only, accepts everything without asking
     public bool AutoAccept { get => autoAccept && Profile != null; set => autoAccept = value; }
     bool autoAccept;
@@ -58,6 +64,9 @@ sealed class AppSettings
     public void Save()
     {
         Directory.CreateDirectory(Dir);
-        System.IO.File.WriteAllText(File, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        // written next to it then swapped in, so a crash or power cut mid save cant leave half a file
+        var tmp = File + ".tmp";
+        System.IO.File.WriteAllText(tmp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        System.IO.File.Move(tmp, File, overwrite: true);
     }
 }

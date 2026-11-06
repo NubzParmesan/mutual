@@ -6,7 +6,10 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace Mutual.Core;
 
-public enum RequestKind : byte { Ssh = 1, Stream = 2, File = 3, Play = 4 }
+// hello and decline arent things you say yes to. hello carries the version so each side knows what
+// the other understands (and can say "theyre behind"), decline tells the asking side you said not now.
+// mutual before 1.4 doesnt know them and quietly drops them, so theyre safe to send to anyone
+public enum RequestKind : byte { Ssh = 1, Stream = 2, File = 3, Play = 4, Hello = 5, Decline = 6 }
 
 public sealed record Request(RequestKind Kind, string? Detail);
 

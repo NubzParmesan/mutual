@@ -55,6 +55,9 @@ public sealed class StreamHost : IDisposable
     }
     // they closed it on purpose (not the link breaking)
     public bool EndedByViewer { get; private set; }
+    // a viewer always asks for a keyframe first thing. a link that ends without a word from them never
+    // reached a viewer at all (an older mutual on their end hangs up until they click accept)
+    public bool HeardFromViewer { get; private set; }
     public event Action<string>? ClipboardReceived;
     public void SendClipboard(string text) { try { wire.Send(Msg.Clipboard, System.Text.Encoding.UTF8.GetBytes(text)); } catch { } }
     public event Action<string>? Status;
@@ -69,9 +72,12 @@ public sealed class StreamHost : IDisposable
     public Exception? SoundFailure => sound?.Failure;
 
     // openUdp makes the udp lane with the key this host just made. null keeps video on tcp
-    public StreamHost(Wire wire, StreamSource source, int fps = 60, int bitrate = 12_000_000, bool allowInput = true, Func<byte[], UdpVideo>? openUdp = null, bool shareSound = true)
+    // onStatus gets hooked up before anything starts. hooking Status after the constructor could miss
+    // a "viewer left" that came in the first few ms, and then whoever waits on it waits forever
+    public StreamHost(Wire wire, StreamSource source, int fps = 60, int bitrate = 12_000_000, bool allowInput = true, Func<byte[], UdpVideo>? openUdp = null, bool shareSound = true, Action<string>? onStatus = null)
     {
         this.wire = wire; this.source = source; this.fps = fps; this.bitrate = this.maxBitrate = bitrate;
+        if (onStatus != null) Status += onStatus;
         SetControl(allowInput);   // the viewer only sends input once its told it can
         if (openUdp != null)
         {
@@ -226,6 +232,7 @@ public sealed class StreamHost : IDisposable
             {
                 var m = wire.Read();
                 if (m == null) break;
+                HeardFromViewer = true;
                 var (kind, p) = m.Value;
                 switch (kind)
                 {

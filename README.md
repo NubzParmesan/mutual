@@ -37,6 +37,8 @@ Mutual is all of that in one app. The one rule it's built around is that **nothi
 - **SSH** that only turns on while you're both connected and turns itself back off after
 - **Play RimWorld together** in one click with the SplitColony mod: the screen splits, your friend gets the right half with their own mouse, and you keep yours
 - **Reconnects on its own** if the connection drops in the middle of a stream
+- **Keeps itself up to date.** New versions download in the background and get checked against the release, so updating is one click and a few seconds. It never installs anything without you saying yes. It also tells you when your friend is on an older version, with a note you can paste to them
+- **Report a problem** in the menu copies your version and the end of the log so a bug report has what it needs
 - Clipboard sharing if you both turn it on, a summary of every session (time, fps, ping, loss), and a tray icon that shows when your friend is online
 
 ## HOW PRIVATE IS IT
@@ -44,7 +46,7 @@ Mutual is all of that in one app. The one rule it's built around is that **nothi
 - You pair once by swapping codes. A code only holds a public key and some addresses, so it's safe to paste in Discord. Afterwards you both read the same safety code out loud, and Mutual won't pair until you say it matched. If the key ever changes without you pairing again, Mutual warns you
 - Every connection between the two PCs is encrypted, and each side only accepts the one key it paired with
 - There's no account and no cloud. The optional rendezvous server (for when you're not on the same VPN) only ever sees an id and encrypted bytes. It can't read anything, and requests going through it are signed so it can't fake one either
-- Invites that keep getting ignored stop popping up for a while, and the Accept button ignores clicks for the first second so a mid game click can't hit it
+- Invites that keep getting ignored stop popping up for a while, and the Accept button stays greyed out for the first second so a mid game click can't hit it. Hitting Ignore tells your friend, so they're not stuck waiting
 - Received files are marked the same way browser downloads are, so Windows asks before running one, and files that can run code get a warning before you accept
 - The activity list shows what happened on your own PC. Never command history, file contents or what was on screen. You can clear it from the tray menu
 

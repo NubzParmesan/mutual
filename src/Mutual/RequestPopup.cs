@@ -13,7 +13,40 @@ sealed class RequestPopup : Form
         get { var p = base.CreateParams; p.ExStyle |= 0x8 | 0x80 | 0x08000000; return p; }   // topmost, tool window, no activate
     }
 
-    public RequestPopup(string friend, Request req, Action accept)
+    // decline runs when you hit ignore (not when it just times out), so their side can stop waiting
+    public RequestPopup(string friend, Request req, Action accept, Action? decline = null)
+        : this(friend, friend + " " + What(req.Kind), Detail(req), Icon(req.Kind), req.Kind == RequestKind.File && FileTransfer.CanRun(req.Detail), "Accept", accept, "Ignore", decline, ringing: true) { }
+
+    // the same corner card for mutual itself (an update thats ready), no hotkey and no sound
+    public RequestPopup(string who, string headline, string detail, string glyph, string yesText, Action yes, string noText, Action no)
+        : this(who, headline, detail, glyph, false, yesText, yes, noText, no, ringing: false) { }
+
+    static string What(RequestKind k) => k switch
+    {
+        RequestKind.Ssh => "wants to open SSH",
+        RequestKind.Stream => "wants to stream to you",
+        RequestKind.Play => "wants to play together",
+        RequestKind.File => "wants to send you a file",
+        _ => "wants to connect",
+    };
+    static string Icon(RequestKind k) => k switch
+    {
+        RequestKind.Ssh => Theme.Glyph.Terminal,
+        RequestKind.Stream => Theme.Glyph.Screen,
+        RequestKind.Play => Theme.Glyph.Game,
+        RequestKind.File => Theme.Glyph.Download,
+        _ => Theme.Glyph.Link,
+    };
+    static string? Detail(Request req) => req.Kind switch
+    {
+        RequestKind.Ssh => "SSH turns on for this session only, and back off when either of you closes it",
+        _ => string.IsNullOrEmpty(req.Detail) ? null : req.Detail,
+    };
+
+    // ones already up, so a second card stacks above the first instead of right on top of it
+    static readonly List<RequestPopup> open = new();
+
+    RequestPopup(string friend, string headline, string? detail, string glyph, bool risky, string yesText, Action accept, string noText, Action? decline, bool ringing)
     {
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -23,20 +56,6 @@ sealed class RequestPopup : Form
         Font = Theme.Body;
         DoubleBuffered = true;
 
-        var (what, glyph) = req.Kind switch
-        {
-            RequestKind.Ssh => ("wants to open SSH", Theme.Glyph.Terminal),
-            RequestKind.Stream => ("wants to stream to you", Theme.Glyph.Screen),
-            RequestKind.Play => ("wants to play together", Theme.Glyph.Game),
-            RequestKind.File => ("wants to send you a file", Theme.Glyph.Download),
-            _ => ("wants to connect", Theme.Glyph.Link),
-        };
-        string? detail = req.Kind switch
-        {
-            RequestKind.Ssh => "SSH turns on for this session only, and back off when either of you closes it",
-            _ => string.IsNullOrEmpty(req.Detail) ? null : req.Detail,
-        };
-        bool risky = req.Kind == RequestKind.File && FileTransfer.CanRun(req.Detail);
 
         const int width = 380, textX = 70, textW = width - textX - 18;
         var avatar = new Avatar { Who = friend, Ring = Theme.Accent, Size = new Size(40, 40), Location = new Point(18, 18) };
@@ -46,7 +65,7 @@ sealed class RequestPopup : Form
         Controls.Add(avatar);
 
         int y = 16;
-        var head = new Label { Text = friend + " " + what, Font = Theme.Heading, ForeColor = Theme.Text, UseMnemonic = false, AutoEllipsis = true, Bounds = new Rectangle(textX, y, textW - 56, 22) };
+        var head = new Label { Text = headline, Font = Theme.Heading, ForeColor = Theme.Text, UseMnemonic = false, AutoEllipsis = true, Bounds = new Rectangle(textX, y, textW - 56, 22) };
         var when = new Label { Text = DateTime.Now.ToString("h:mm tt"), Font = Theme.Small, ForeColor = Theme.Faint, TextAlign = ContentAlignment.TopRight, Bounds = new Rectangle(width - 74, y + 2, 58, 18) };
         Controls.Add(head); Controls.Add(when);
         y += 24;
@@ -67,20 +86,28 @@ sealed class RequestPopup : Form
         shownAt = DateTime.UtcNow;
         this.accept = accept;
         // you might be fullscreen in a game and this never takes focus, so theres a key for it too
-        hint = new Label { Text = "Ctrl+Alt+Y accepts", Font = Theme.Small, ForeColor = Theme.Faint, Bounds = new Rectangle(textX, y + 8, 110, 18) };
+        this.ringing = ringing;
+        hint = new Label { Text = "Ctrl+Alt+Y accepts", Font = Theme.Small, ForeColor = Theme.Faint, Bounds = new Rectangle(textX, y + 8, 110, 18), Visible = false };
         Controls.Add(hint);
-        var yes = new FlatButton { Text = "Accept", Glyph = Theme.Glyph.Check, Kind = ButtonKind.Primary, Bounds = new Rectangle(width - 18 - 100 - 8 - 86, y, 100, 32) };
-        // a click in the first second is prolly someone mid game, not a real yes
+        var yes = new FlatButton { Text = yesText, Glyph = Theme.Glyph.Check, Kind = ButtonKind.Primary, Bounds = new Rectangle(width - 18 - 100 - 8 - 86, y, 100, 32) };
+        // a click in the first second is prolly someone mid game, not a real yes. it shows as greyed out
+        // for that second so a click that does nothing doesnt look broken
+        yes.Enabled = false;
+        var arm = new System.Windows.Forms.Timer { Interval = 1000 };
+        arm.Tick += (_, _) => { arm.Stop(); if (!yes.IsDisposed) { yes.Enabled = true; yes.Invalidate(); } };
+        arm.Start();
         yes.Click += (_, _) => Accept();
-        var no = new FlatButton { Text = "Ignore", Bounds = new Rectangle(width - 18 - 86, y, 86, 32) };
-        no.Click += (_, _) => Close();
+        var no = new FlatButton { Text = noText, Bounds = new Rectangle(width - 18 - 86, y, 86, 32) };
+        no.Click += (_, _) => { Close(); decline?.Invoke(); };
         Controls.Add(yes); Controls.Add(no);
         Size = new Size(width, y + 32 + 16);
 
         // grow to the screens scaling now so the corner spot is worked out from the real size
         Theme.ScaleUp(this);
         var area = Screen.PrimaryScreen!.WorkingArea;
-        Location = new Point(area.Right - Width - this.S(16), area.Bottom - Height - this.S(16));
+        int above = open.Where(o => !o.IsDisposed).Sum(o => o.Height + this.S(10));
+        Location = new Point(area.Right - Width - this.S(16), Math.Max(area.Top, area.Bottom - Height - this.S(16) - above));
+        open.Add(this);
         // their side stops waiting after 10 min so this goes away too
         var expire = new System.Windows.Forms.Timer { Interval = 600_000 };
         expire.Tick += (_, _) => Close();
@@ -98,12 +125,13 @@ sealed class RequestPopup : Form
             if (t >= 1) fade.Stop();
         };
         Shown += (_, _) => fade.Start();
-        FormClosed += (_, _) => { fade.Dispose(); expire.Dispose(); };
-        System.Media.SystemSounds.Asterisk.Play();
+        FormClosed += (_, _) => { fade.Dispose(); expire.Dispose(); arm.Dispose(); open.Remove(this); };
+        if (ringing) System.Media.SystemSounds.Asterisk.Play();
     }
 
     readonly Action accept;
     readonly Label hint;
+    readonly bool ringing;
     DateTime shownAt;
     bool hotkey;
     const int HotkeyId = 0x4D56;
@@ -118,8 +146,8 @@ sealed class RequestPopup : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        // only one popup can own the key, the others js dont show the hint
-        hotkey = RegisterHotKey(Handle, HotkeyId, 0x1 | 0x2 | 0x4000, 0x59);   // ctrl+alt+y, no repeat
+        // only one popup can own the key, the others js dont show the hint. mutual's own cards dont take it
+        hotkey = ringing && RegisterHotKey(Handle, HotkeyId, 0x1 | 0x2 | 0x4000, 0x59);   // ctrl+alt+y, no repeat
         hint.Visible = hotkey;
     }
 

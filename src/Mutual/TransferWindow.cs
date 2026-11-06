@@ -8,6 +8,8 @@ sealed class TransferWindow : DarkForm
     readonly Label detail = new() { Dock = DockStyle.Top, Height = 26, Font = Theme.Small, ForeColor = Theme.Dim, UseMnemonic = false, AutoEllipsis = true };
     readonly Label numbers = new() { Dock = DockStyle.Top, Height = 24, Font = Theme.Small, ForeColor = Theme.Dim, TextAlign = ContentAlignment.TopLeft, UseMnemonic = false };
     public CancellationTokenSource Cancel { get; } = new();
+    // they hit ignore, so the cancel was them not you
+    public bool Declined { get; set; }
     readonly long total;
     readonly System.Diagnostics.Stopwatch clock = new();
 

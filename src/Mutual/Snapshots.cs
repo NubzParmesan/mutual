@@ -7,7 +7,7 @@ namespace Mutual;
 // for checking how things look and for the readme pictures
 static class Snapshots
 {
-    public static readonly string[] Names = { "main", "main-live", "main-unpaired", "pair", "picker", "settings", "prompt", "request", "transfer", "controlbar" };
+    public static readonly string[] Names = { "main", "main-live", "main-unpaired", "pair", "picker", "settings", "prompt", "request", "transfer", "controlbar", "main-behind", "update-offer" };
 
     public static int Run(AppSettings settings, string name, string path)
     {
@@ -22,6 +22,8 @@ static class Snapshots
             "prompt" => Prompt.Make("The key Mutual trusts for alex changed, but you didn't pair again.\n\nNew safety code: 7D4F-9B98-8960\n\nIf neither of you re-paired, something on this PC changed it. Pair again and compare the safety code out loud.", "Mutual", MessageBoxButtons.OK, MessageBoxIcon.Warning),
             "request" => new RequestPopup("alex", new Request(RequestKind.Stream, "window: RimWorld by Ludeon Studios"), () => { }),
             "transfer" => TransferWindow.Demo(),
+            "main-behind" => new MainForm(settings, offline: true).Demo(online: true, behind: true),
+            "update-offer" => new RequestPopup("Mutual", "Mutual 1.4.1 is ready", "Takes a few seconds, then Mutual opens again. Windows asks for admin once.", Theme.Glyph.Update, "Update", () => { }, "Later", () => { }),
             "controlbar" => new ControlBar("alex", false),
             _ => throw new ArgumentException("pick one of " + string.Join(", ", Names)),
         };
