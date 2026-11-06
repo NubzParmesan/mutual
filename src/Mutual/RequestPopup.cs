@@ -21,6 +21,10 @@ sealed class RequestPopup : Form
     public RequestPopup(string who, string headline, string detail, string glyph, string yesText, Action yes, string noText, Action no)
         : this(who, headline, detail, glyph, false, yesText, yes, noText, no, ringing: false) { }
 
+    // just letting you know, one button and nothing to decide
+    public RequestPopup(string who, string headline, string detail, string glyph, Action ok)
+        : this(who, headline, detail, glyph, false, "Got it", ok, null, null, ringing: false) { }
+
     static string What(RequestKind k) => k switch
     {
         RequestKind.Ssh => "wants to open SSH",
@@ -46,7 +50,7 @@ sealed class RequestPopup : Form
     // ones already up, so a second card stacks above the first instead of right on top of it
     static readonly List<RequestPopup> open = new();
 
-    RequestPopup(string friend, string headline, string? detail, string glyph, bool risky, string yesText, Action accept, string noText, Action? decline, bool ringing)
+    RequestPopup(string friend, string headline, string? detail, string glyph, bool risky, string yesText, Action accept, string? noText, Action? decline, bool ringing)
     {
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -89,7 +93,7 @@ sealed class RequestPopup : Form
         this.ringing = ringing;
         hint = new Label { Text = "Ctrl+Alt+Y accepts", Font = Theme.Small, ForeColor = Theme.Faint, Bounds = new Rectangle(textX, y + 8, 110, 18), Visible = false };
         Controls.Add(hint);
-        var yes = new FlatButton { Text = yesText, Glyph = Theme.Glyph.Check, Kind = ButtonKind.Primary, Bounds = new Rectangle(width - 18 - 100 - 8 - 86, y, 100, 32) };
+        var yes = new FlatButton { Text = yesText, Glyph = Theme.Glyph.Check, Kind = ButtonKind.Primary, Bounds = new Rectangle(width - 18 - 100 - (noText == null ? 0 : 8 + 86), y, 100, 32) };
         // a click in the first second is prolly someone mid game, not a real yes. it shows as greyed out
         // for that second so a click that does nothing doesnt look broken
         yes.Enabled = false;
@@ -97,9 +101,13 @@ sealed class RequestPopup : Form
         arm.Tick += (_, _) => { arm.Stop(); if (!yes.IsDisposed) { yes.Enabled = true; yes.Invalidate(); } };
         arm.Start();
         yes.Click += (_, _) => Accept();
-        var no = new FlatButton { Text = noText, Bounds = new Rectangle(width - 18 - 86, y, 86, 32) };
-        no.Click += (_, _) => { Close(); decline?.Invoke(); };
-        Controls.Add(yes); Controls.Add(no);
+        Controls.Add(yes);
+        if (noText != null)
+        {
+            var no = new FlatButton { Text = noText, Bounds = new Rectangle(width - 18 - 86, y, 86, 32) };
+            no.Click += (_, _) => { Close(); decline?.Invoke(); };
+            Controls.Add(no);
+        }
         Size = new Size(width, y + 32 + 16);
 
         // grow to the screens scaling now so the corner spot is worked out from the real size

@@ -126,7 +126,7 @@ sealed class MainForm : DarkForm
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50)); grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         streamButton = new Tile { Text = "Stream", Subtitle = "Share your screen, a window or a box", Glyph = Theme.Glyph.Screen, Kind = ButtonKind.Primary };
         sendButton = new Tile { Text = "Send a file", Subtitle = "Or drop one on this window", Glyph = Theme.Glyph.Send, GlyphColor = Color.FromArgb(110, 170, 255) };
-        playButton = new Tile { Text = "Play RimWorld", Subtitle = "Split screen, you each get a half", Glyph = Theme.Glyph.Game, GlyphColor = Color.FromArgb(190, 130, 255) };
+        playButton = new Tile { Text = "Play RimWorld", Subtitle = "You host, they get the right half", Glyph = Theme.Glyph.Game, GlyphColor = Color.FromArgb(190, 130, 255) };
         sshButton = new Tile { Text = "SSH", Subtitle = "A terminal on their PC, if they say yes", Glyph = Theme.Glyph.Terminal, GlyphColor = Theme.Online };
         streamButton.Click += (_, _) => StartStream();
         sendButton.Click += (_, _) => SendFile();
@@ -682,6 +682,13 @@ sealed class MainForm : DarkForm
         if (pairing == null) return;
         if (req.Kind == RequestKind.Hello) { OnHello(req.Detail); return; }
         if (req.Kind == RequestKind.Decline) { OnDeclined(req.Detail); return; }
+        // the offer that card promised just showed up, or isnt coming anymore
+        if (req.Kind == RequestKind.Stream || (req.Kind == RequestKind.Play && req.Detail == PlayNote.Stopped)) playCard?.Close();
+        if (req.Kind == RequestKind.Play && req.Detail == PlayNote.Stopped)
+        {
+            log?.Write(ActivityResult.INFO, "Mutual: " + pairing.PeerName + " stopped hosting RimWorld");
+            return;
+        }
         // 3 ignored invites in 10 min and the popups go quiet for 10 min, so nobody can spam you into a misclick
         var now = DateTime.UtcNow;
         unanswered.RemoveAll(t => now - t > TimeSpan.FromMinutes(10));
@@ -696,11 +703,26 @@ sealed class MainForm : DarkForm
             log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} keeps asking, pausing their popups for 10 minutes");
             return;
         }
-        string detail = req.Kind == RequestKind.File && FileTransfer.TryParse(req.Detail, out var fn, out var fs) ? fn + " (" + TransferWindow.Size(fs) + ")" : req.Detail ?? "";
+        if (req.Kind == RequestKind.Play && req.Detail == PlayNote.Starting)
+        {
+            log?.Write(ActivityResult.INFO, "Mutual: " + pairing.PeerName + " is hosting RimWorld, a stream offer comes when their colony is up");
+            if (settings.AutoAccept) return;
+            unanswered.Add(now);
+            playCard?.Close();
+            var card = new RequestPopup(pairing.PeerName, PlayCardHead(pairing.PeerName), PlayCardBody, Theme.Glyph.Game, unanswered.Clear);
+            card.FormClosed += (_, _) => { if (playCard == card) playCard = null; };
+            playCard = card;
+            card.Show();
+            return;
+        }
+        // the only other play note there is. the text comes from here, never from whats on the wire
+        if (req.Kind == RequestKind.Play && req.Detail != PlayNote.AskHost) return;
+        string detail = req.Kind == RequestKind.Play ? PlayAskBody
+            : req.Kind == RequestKind.File && FileTransfer.TryParse(req.Detail, out var fn, out var fs) ? fn + " (" + TransferWindow.Size(fs) + ")" : req.Detail ?? "";
         log?.Write(ActivityResult.INFO, $"Mutual: {pairing.PeerName} asked for {Asked(req.Kind)}" + (detail.Length > 0 ? ": " + detail : ""));
         if (settings.AutoAccept) { Accept(req); return; }
         unanswered.Add(now);
-        var popup = new RequestPopup(pairing.PeerName, req.Kind == RequestKind.File ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); },
+        var popup = new RequestPopup(pairing.PeerName, req.Kind is RequestKind.File or RequestKind.Play ? req with { Detail = detail } : req, () => { unanswered.Clear(); Accept(req); },
             // tells them, so they're not left on "waiting for you to accept" for ten minutes
             () => { if (req.Kind is RequestKind.Stream or RequestKind.File) _ = Ask(new Request(RequestKind.Decline, ((byte)req.Kind).ToString())); });
         popup.Show();
@@ -732,6 +754,7 @@ sealed class MainForm : DarkForm
             case RequestKind.Ssh: StartSsh(answering: true); break;
             case RequestKind.Stream: _ = WatchStream(req.Detail); break;
             case RequestKind.File: _ = ReceiveFile(req.Detail); break;
+            case RequestKind.Play: _ = PlayRimWorld(askedToHost: true); break;
             default: Prompt.Show(this, req.Kind + " isn't built yet.", "Mutual"); break;
         }
     }
@@ -968,12 +991,37 @@ sealed class MainForm : DarkForm
     // for --do play-rimworld
     public void PlayRimWorldNow() => _ = PlayRimWorld();
 
+    public static string PlayCardHead(string peer) => peer + " is hosting RimWorld";
+    public const string PlayCardBody = "Their game is loading. You'll get a stream offer once a colony is up, accept that and the right half is yours.";
+    public const string PlayAskBody = "RimWorld or the SplitColony mod isn't set up on their PC. Accept to host on yours, they get the right half.";
+
+    void TellFriendAboutPlay(string note)
+    {
+        if (peerVersion >= PlayNote.Since) _ = Ask(new Request(RequestKind.Play, note));
+    }
+
+    // whoever clicks play hosts, so if this pc cant, say why and point at the other one
+    async Task CantHost(HostProblem problem, bool askedToHost)
+    {
+        var peer = pairing!.PeerName;
+        var text = "This PC can't host RimWorld\n\n"
+            + (problem == HostProblem.NoGame ? "RimWorld isn't installed thru Steam here." : "The SplitColony mod isn't turned on in RimWorld here.")
+            + " Whoever clicks Play hosts the game and the other person gets the right half as a stream.";
+        if (askedToHost) { Prompt.Show(this, text, "Mutual"); return; }
+        if (!(peerVersion >= PlayNote.Since)) { Prompt.Show(this, text + "\n\nAsk " + peer + " to click Play RimWorld on their PC.", "Mutual"); return; }
+        if (Prompt.Show(this, text + "\n\nAsk " + peer + " to host instead?", "Mutual", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (await Ask(new Request(RequestKind.Play, PlayNote.AskHost))) log?.Write(ActivityResult.INFO, "Mutual: asked " + peer + " to host RimWorld");
+        else Prompt.Show(this, "Couldn't reach " + peer + "'s Mutual.", "Mutual");
+    }
+
     // starts rimworld thru steam if its not open, turns the split on and streams them the right half
     // their mouse and keys go to the mod, you keep the left half
-    async Task PlayRimWorld()
+    async Task PlayRimWorld(bool askedToHost = false)
     {
         if (pairing == null || hub == null) { if (pairing == null) Pair(); return; }
         if (sharing != null || waitingForViewer != null) { Prompt.Show(this, "Stop the current stream first.", "Mutual"); return; }
+        var problem = RimWorldHost.Check(SplitColonySource.GameRunning());
+        if (problem != HostProblem.None) { await CantHost(problem, askedToHost); return; }
         if (!EnsureFirewall()) return;
         foreach (var d in Process.GetProcessesByName("DuoCursor")) try { d.Kill(); d.WaitForExit(2000); } catch { }
         if (!SplitColonySource.GameRunning())
@@ -986,7 +1034,9 @@ sealed class MainForm : DarkForm
         try { src = new SplitColonySource(); }
         catch (SocketException) { Prompt.Show(this, "Something else is already talking to the SplitColony mod.", "Mutual"); return; }
         rimCancelled = false;
+        rimStage = RimStage(0);
         SetShare(ShareState.Rimworld);
+        TellFriendAboutPlay(PlayNote.Starting);
         // the mod only answers once a colony is loaded and big mod lists take a while
         for (int i = 0; i < 600 && !src.Active && !rimCancelled; i++)
         {
@@ -994,16 +1044,31 @@ sealed class MainForm : DarkForm
             // game is up but no split yet, flip it
             if (i == 16 && SplitColonySource.GameRunning() && !src.Active) src.Toggle();
             if (i % 40 == 39 && !src.Active && SplitColonySource.GameRunning()) src.Toggle();
+            var stage = RimStage(i);
+            if (stage != rimStage) { rimStage = stage; RenderSession(); }
         }
         if (!src.Active)
         {
+            bool started = SplitColonySource.GameRunning();
             src.Dispose(); SetShare(ShareState.None);
+            TellFriendAboutPlay(PlayNote.Stopped);
             if (rimCancelled) { log?.Write(ActivityResult.INFO, "Mutual: stopped waiting for RimWorld"); return; }
-            Prompt.Show(this, "RimWorld never turned the split on. Is the SplitColony mod enabled, and is a colony loaded?", "Mutual");
+            Prompt.Show(this, started
+                ? "RimWorld never turned the split on. Is a colony loaded? You can press Pause/Break in game to flip it by hand."
+                : "RimWorld never started. Steam might be waiting on an update or a prompt, or the game didn't launch.", "Mutual");
             return;
         }
         log?.Write(ActivityResult.OK, "Mutual: RimWorld split is on");
         _ = ShareAsync(src);
+    }
+
+    // what the banner says while it waits. steam launching looks the same as steam doing nothing, so after a minute it says so
+    string RimStage(int halfSeconds)
+    {
+        var peer = pairing?.PeerName ?? "your friend";
+        if (SplitColonySource.GameRunning()) return "RimWorld is up. Load a colony and the split turns on by itself, then " + peer + " gets the stream offer.";
+        return halfSeconds < 120 ? "Starting RimWorld thru Steam on this PC. You're hosting, " + peer + " gets the right half."
+            : "RimWorld still hasn't started. Check Steam, it might be waiting on an update or a prompt.";
     }
 
     // whats going on rn, shown in the banner under your friends name and on the stream tile
@@ -1013,6 +1078,8 @@ sealed class MainForm : DarkForm
     string shareSource = "";
     string? watchingWhat;
     bool rimCancelled;
+    string rimStage = "";
+    RequestPopup? playCard;
     // the invite never got to them (offline, or mutual closed), so "waiting for them to accept" would be a lie
     bool inviteMissed;
 
@@ -1045,7 +1112,7 @@ sealed class MainForm : DarkForm
                 break;
             case ShareState.Rimworld:
                 sessionBar.Style(Theme.Glyph.Game, Theme.Accent, Theme.AccentSoft);
-                sessionBar.Message = "Waiting for RimWorld. Load a colony and the split turns on by itself.";
+                sessionBar.Message = rimStage;
                 sessionBar.AddButton("Cancel", () => rimCancelled = true, ButtonKind.Secondary);
                 break;
             default:
@@ -1182,7 +1249,7 @@ sealed class MainForm : DarkForm
     });
 
     // fake states for --snapshot-ui
-    public MainForm Demo(bool online = false, bool live = false, bool unpaired = false, bool behind = false)
+    public MainForm Demo(bool online = false, bool live = false, bool unpaired = false, bool behind = false, bool rimworld = false)
     {
         if (unpaired) { ignoreSaved = true; LoadPairing(); activity.SetRows(new()); return this; }
         // readme pictures use made up names, never a real pairing
@@ -1203,6 +1270,7 @@ sealed class MainForm : DarkForm
         });
         if (online) { this.online = true; checking = false; friendStatus.Text = "Online  ·  18 ms"; avatar.Ring = Theme.Online; }
         if (live) { shareSource = "window: RimWorld by Ludeon Studios"; SetShare(ShareState.Live); }
+        if (rimworld) { rimStage = "RimWorld is up. Load a colony and the split turns on by itself, then alex gets the stream offer."; SetShare(ShareState.Rimworld); }
         if (behind)
         {
             pairInfo.Text = "25.14.88.203   ·   safety code 7D4F-9B98-8960   ·   they're on 1.3.3";

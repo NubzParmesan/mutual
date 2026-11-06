@@ -13,6 +13,13 @@ public enum RequestKind : byte { Ssh = 1, Stream = 2, File = 3, Play = 4, Hello 
 
 public sealed record Request(RequestKind Kind, string? Detail);
 
+// the detail on a play request. 1.4.2 and older show a dead popup for play, so only send these to 1.4.3+
+public static class PlayNote
+{
+    public const string Starting = "starting", Stopped = "stopped", AskHost = "host";
+    public static readonly Version Since = new(1, 4, 3);
+}
+
 // "wanna connect?" pings on port 28792, same pinned tls as everything else
 // a ping only asks, it never turns anything on. old mutual ssh sends MSN1 (means ssh), mutual sends
 // MUT1 + kind + detail which the old notifier ignores
