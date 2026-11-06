@@ -99,13 +99,26 @@ sealed class SshSession : DarkForm
             phase = "Ready"; readyAt = DateTime.UtcNow;
             var target = SshTarget();
             if (!Pairing.IsPlainAddress(target)) throw new InvalidOperationException("The saved address for " + p.PeerName + " doesn't look like an address; not passing it to ssh.");
-            // -- so nothing after it can count as an ssh option
-            shell = Process.Start(new ProcessStartInfo(sshClient) { UseShellExecute = false, ArgumentList = { "--", target } });
+            var start = new ProcessStartInfo(sshClient) { UseShellExecute = false };
+            // an alias from ~/.ssh/config already knows the user
+            foreach (var a in SshLogin.Args(target, target == p.PeerAddress ? AppSettings.Load().PeerLogin : null)) start.ArgumentList.Add(a);
+            shell = Process.Start(start);
             WriteState(me, shell, "Ready");
             Say("SSH is on", "You're both in and a login window opened. Turn it off here or close this window and it goes back off.", on: true);
+            bool loginChecked = false;
             while (File.Exists(StatePath) && !stop.IsCancellationRequested)
             {
                 if (watchdog.HasExited) throw new InvalidOperationException("Watchdog stopped; closing SSH.");
+                // ssh gives up with 255 when the key isnt accepted, and its window closes before you can read why
+                if (!loginChecked && shell is { HasExited: true })
+                {
+                    loginChecked = true;
+                    if (shell.ExitCode == 255 && (DateTime.UtcNow - readyAt.Value).TotalSeconds < 30)
+                    {
+                        log.Write(ActivityResult.FAILED, "Couldn't log in to " + p.PeerName + " (key not accepted); SSH is still on for them");
+                        Say("SSH is on, but you couldn't log in", "Their PC doesn't have this PC's SSH key, or their Mutual is older than 1.4.4 and didn't send its login name.", on: true);
+                    }
+                }
                 await PeerLink.ExchangeByteAsync(link, LegacyConsent.Alive, stop.Token);
                 await Task.Delay(1000, stop.Token);
             }
@@ -148,8 +161,7 @@ sealed class SshSession : DarkForm
         var cfg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "config");
         try
         {
-            if (File.Exists(cfg) && File.ReadLines(cfg).Any(l => l.Trim().StartsWith("Host ", StringComparison.OrdinalIgnoreCase) && l.Trim()[5..].Split(' ').Contains(p.PeerName)))
-                return p.PeerName;
+            if (File.Exists(cfg) && SshLogin.FindAlias(File.ReadLines(cfg), p.PeerName, p.PeerAddress) is { } alias) return alias;
         }
         catch { }
         return p.PeerAddress;

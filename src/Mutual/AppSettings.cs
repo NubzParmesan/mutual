@@ -23,6 +23,8 @@ sealed class AppSettings
     public bool DeclinedInstall { get; set; }
     // hash of the friends key last time, so a pairing that changes without you re-pairing gets noticed
     public string? PeerFingerprint { get; set; }
+    // their windows name, its what ssh has to log in as. their mutual tells us
+    public string? PeerLogin { get; set; }
     public bool ShortcutsMade { get; set; }
     // told you once that closing the window keeps it in the tray
     public bool TrayHintShown { get; set; }

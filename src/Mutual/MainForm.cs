@@ -514,7 +514,7 @@ sealed class MainForm : DarkForm
     // their version, from their hello. mutual before 1.4 never says hello
     static readonly Version LinkConfirmSince = new(1, 4, 0);
     Version? peerVersion;
-    bool helloSent;
+    bool helloSent, loginSent;
     int onlineWithoutHello;
 
     void SendHello()
@@ -532,6 +532,7 @@ sealed class MainForm : DarkForm
         peerVersion = v;
         if (hub != null) hub.PeerConfirms = v >= LinkConfirmSince;
         if (!helloSent) SendHello();
+        if (!loginSent && v >= SshLogin.Since) { loginSent = true; _ = Ask(new Request(RequestKind.Login, Environment.UserName)); }
         if (!changed) return;
         if (pairing != null) pairInfo.Text = PairText(pairing);
         RefreshVersionBar();
@@ -580,7 +581,7 @@ sealed class MainForm : DarkForm
             bool up = direct || rendezvous?.PeerOnline == true;
             friendStatus.Text = !up ? "Offline" : !direct ? "Online, thru the relay" : "Online  ·  " + Math.Max(1, ms) + " ms";
             friendStatus.ForeColor = up && direct && ms > 150 ? Theme.Warn : Theme.Dim;
-            if (up && !online) { helloSent = false; onlineWithoutHello = 0; }
+            if (up && !online) { helloSent = false; loginSent = false; onlineWithoutHello = 0; }
             if (!up && online && hub != null) hub.PeerConfirms = false;   // whatever comes back might be a different version
             if (up && !helloSent) SendHello();
             if (up && peerVersion == null && ++onlineWithoutHello == 3) RefreshVersionBar();
@@ -682,6 +683,11 @@ sealed class MainForm : DarkForm
         if (pairing == null) return;
         if (req.Kind == RequestKind.Hello) { OnHello(req.Detail); return; }
         if (req.Kind == RequestKind.Decline) { OnDeclined(req.Detail); return; }
+        if (req.Kind == RequestKind.Login)
+        {
+            if (SshLogin.IsUsableName(req.Detail) && settings.PeerLogin != req.Detail) { settings.PeerLogin = req.Detail; settings.Save(); }
+            return;
+        }
         // the offer that card promised just showed up, or isnt coming anymore
         if (req.Kind == RequestKind.Stream || (req.Kind == RequestKind.Play && req.Detail == PlayNote.Stopped)) playCard?.Close();
         if (req.Kind == RequestKind.Play && req.Detail == PlayNote.Stopped)
